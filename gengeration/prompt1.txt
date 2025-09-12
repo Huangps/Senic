@@ -1,0 +1,11 @@
+根据这张图片你所有能识别出的汽车数量、行人数量生成一段程序框架。
+假有两辆车和一个行人，你就生成：
+ego = Car <?1>，facing <?2>
+otherCar1 =  Car  <?3>，facing <?4>
+otherCar2 =  Car  <?5>，facing  <?6>
+human1 = Pedestrian <?7>，facing  <?8>
+假如有1辆车和1个行人，你就生成：
+ego = Car <?1>，facing <?2>
+otherCar1 =  Car  <?3>，facing <?4>
+human1 = Pedestrian <?5，facing  <?6>
+
