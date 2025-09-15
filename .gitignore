@@ -12,6 +12,10 @@ venv/
 .venv/
 venv-2.x/
 
+.gitignore
+
+gengeration/SMT/temp_smt
+
 # Logs and databases
 *.log
 *.sqlite

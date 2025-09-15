@@ -187,45 +187,6 @@ class OrientationRelationAnalyzer:
 """
         return smt_code
 
-    def _write_smt_file(self, smt_code: str, filename: str) -> str:
-        file_path = os.path.join(self.temp_dir, filename)
-        with open(file_path, "w") as f:
-            f.write(smt_code)
-        return file_path
-
-    def _run_smt_solver(self, file_path: str) -> tuple[bool, str]:
-        try:
-            result = subprocess.run(
-                [self.dreal_path, file_path],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-
-            output = result.stdout.strip()
-
-            # 解析输出
-            if output:
-                lines = output.split('\n')
-                for line in lines:
-                    line = line.strip().lower()
-                    if line in ["sat", "unsat"] or line.startswith("delta-sat"):
-                        if line == "unsat":
-                            return (True, "unsat")
-                        else:
-                            return (True, "sat")
-
-            # 错误处理
-            error_output = result.stderr.strip()
-            if error_output and "error" in error_output.lower() and "model is not available" not in error_output.lower():
-                print(f"dReal Error: {error_output}")
-                return (False, "error")
-
-            return (False, "unknown")
-
-        except Exception as e:
-            print(f"Solver Error: {e}")
-            return (False, "error")
 
     def check_toward_relation(self, A_point: Dict, B_point: Dict) -> bool:
         """
@@ -268,7 +229,7 @@ class OrientationRelationAnalyzer:
             A_point['heading'], B_point['heading'],tolerance
         )
 
-        filename = f"{B_point['id']}_find_y_relative_{A_point['id']}.smt2"
+        filename = f"{B_point['id']}_facing_relative_to_{A_point['id']}.smt2"
         file_path = self._write_smt_file(smt_code, filename)
 
         success, result = self._run_smt_solver(file_path)
@@ -303,7 +264,7 @@ class OrientationRelationAnalyzer:
 
         # 检查away关系
         elif self.check_away_relation(A_point, B_point):
-            return "away"
+            return "away from"
 
         # 检查相对朝向关系
         else:
@@ -312,6 +273,46 @@ class OrientationRelationAnalyzer:
                 return f"relative_heading_{y_value:.6g}"
 
         return "none"
+
+    def _write_smt_file(self, smt_code: str, filename: str) -> str:
+        file_path = os.path.join(self.temp_dir, filename)
+        with open(file_path, "w") as f:
+            f.write(smt_code)
+        return file_path
+
+    def _run_smt_solver(self, file_path: str) -> tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                [self.dreal_path, file_path],
+                capture_output=True,
+                text=True
+            )
+
+            output = result.stdout.strip()
+
+            # 解析输出
+            if output:
+                lines = output.split('\n')
+                for line in lines:
+                    line = line.strip().lower()
+                    if line in ["sat", "unsat"] or line.startswith("delta-sat"):
+                        if line == "unsat":
+                            return (True, "unsat")
+                        else:
+                            return (True, "sat")
+
+            # 错误处理
+            error_output = result.stderr.strip()
+            if error_output and "error" in error_output.lower() and "model is not available" not in error_output.lower():
+                print(f"dReal Error: {error_output}")
+                return (False, "error")
+
+            return (False, "unknown")
+
+        except Exception as e:
+            print(f"Solver Error: {e}")
+            return (False, "error")
+
 
 
 class SpatialRelationAnalyzer:
@@ -329,10 +330,66 @@ class SpatialRelationAnalyzer:
         self.temp_dir = temp_dir
         os.makedirs(temp_dir, exist_ok=True)
 
+    def _generate_relation_smt_code(self, A_x: float, A_y: float, A_heading: float,
+                                    B_x: float, B_y: float) -> str:
+        """
+        生成SMT约束：求解x, y，使得B落在A的局部坐标系下 [x, x+5] × [y, y+5] 区域内
+        - x: 横向（左负右正，基于A朝向）
+        - y: 纵向（前正后负，基于A朝向）
+        """
+        smt_code = f"""; SMT约束：求解x, y，使得B在A的局部坐标系下落在 [x, x+5] × [y, y+5] 区域内
+    (set-logic QF_NRA)
+
+    ; 定义变量
+    (declare-const A_x Real)
+    (declare-const A_y Real)
+    (declare-const A_heading Real)
+    (declare-const B_x Real)
+    (declare-const B_y Real)
+    (declare-const x Int)   ; ← 横向偏移（左负右正）
+    (declare-const y Int)   ; ← 纵向偏移（前正后负）
+
+    ; 设置已知值
+    (assert (= A_x {A_x}))
+    (assert (= A_y {A_y}))
+    (assert (= A_heading {A_heading}))
+    (assert (= B_x {B_x}))
+    (assert (= B_y {B_y}))
+
+    ; 计算全局坐标系下B相对A的偏移
+    (define-fun delta_x_global () Real (- B_x A_x))
+    (define-fun delta_y_global () Real (- B_y A_y))
+
+    ; 将A的朝向转换为弧度
+    (define-fun heading_rad () Real (* A_heading (/ {math.pi} 180.0)))
+
+    ;旋转矩阵：将全局偏移旋转到A的局部坐标系（A朝向为局部Y轴正方向）
+
+    (define-fun local_x () Real
+        (+ (* (- (sin heading_rad)) delta_y_global)
+           (* (cos heading_rad) delta_x_global)))
+    
+    (define-fun local_y () Real
+        (+ (* (sin heading_rad) delta_x_global)
+           (* (cos heading_rad) delta_y_global)))
+
+    ; 约束：B在局部坐标系下落在 [x, x+5] × [y, y+5]
+    (assert (>= local_x x))
+    (assert (<= local_x (+ x 5.0)))
+    (assert (>= local_y y))
+    (assert (<= local_y (+ y 5.0)))
+
+
+    ; 求解x, y
+    (check-sat)
+    (get-value (x y))
+    """
+        return smt_code
+
     def _generate_NSWE_relation_smt_code(self, relation_type: str, A_x: float, A_y: float, A_heading: float,
                            B_x: float, B_y: float) -> str:
         """
-        生成SMT约束代码
+        生成B相对A的前后左右相对关系SMT约束代码
 
         Args:
             relation_type: 关系类型 ('left', 'right', 'ahead', 'behind')
@@ -365,7 +422,7 @@ class SpatialRelationAnalyzer:
 (declare-const A_heading Real)
 (declare-const B_x Real)
 (declare-const B_y Real)
-(declare-const range_x Real)
+(declare-const range_x Int)
 
 ; 设置已知值
 (assert (= A_x {A_x}))
@@ -439,16 +496,15 @@ class SpatialRelationAnalyzer:
             f.write(smt_code)
         return file_path
 
-    def _run_smt_solver(self, file_path: str) -> tuple[bool, str]:
+    def _run_smt_solver_NSWE_x(self, file_path: str) -> tuple[bool, str, str]:
         """
-        运行dreal求解器
+        运行dreal求解器, 获取前后左右相对位置 以及 x（距离区间[x,x+5]）
         """
         try:
             result = subprocess.run(
                 ["/opt/dreal/4.21.06.2/bin/dreal", file_path],
                 capture_output=True,
-                text=True,
-                timeout=30
+                text=True
             )
 
             output = result.stdout.strip().lower()
@@ -460,26 +516,62 @@ class SpatialRelationAnalyzer:
                 # 精确匹配
                 if line in ["sat", "unsat"] or line.startswith("delta-sat"):
                     if line == "unsat":
-                        return (True, "unsat")
+                        return (True, "unsat" ,"unsat" )
                     else:
-                        return (True, "sat")
+                        return (True, "sat" ,output)
 
             # 错误处理
             error_output = result.stderr.strip()
             if error_output:
                 if "error" in error_output.lower() and "model is not available" not in error_output.lower():
                     print(f"dReal Error: {error_output}")
-                    return (False, "error")
+                    return (False, "error", "error")
 
-            return (False, "unknown")
+            return (False, "unknown", "unknown")
 
         except Exception as e:
             print(f"Unexpected Error: {e}")
-            return (False, "error")
-
-    def check_spatial_relation(self, relation_type: str, A_point: Dict, B_point: Dict) -> bool:
+            return (False, "error", "error")
+    def _run_smt_solver_numerical_xy(self, file_path: str) -> tuple[bool, str, str]:
         """
-        检查两点之间的空间关系（range_x需要在SMT文件中设置）
+        运行dreal求解器, 获取相对位置关系数值
+        """
+        try:
+            result = subprocess.run(
+                ["/opt/dreal/4.21.06.2/bin/dreal", file_path],
+                capture_output=True,
+                text=True
+            )
+
+            output = result.stdout.strip().lower()
+
+            # 按行解析，确保精确匹配
+            lines = output.split('\n')
+            for line in lines:
+                line = line.strip().lower()
+                # 精确匹配
+                if line in ["sat", "unsat"] or line.startswith("delta-sat"):
+                    if line == "unsat":
+                        return (True, "unsat","unsat")
+                    else:
+                        return (True, "sat", output)
+
+            # 错误处理
+            error_output = result.stderr.strip()
+            if error_output:
+                if "error" in error_output.lower() and "model is not available" not in error_output.lower():
+                    print(f"dReal Error: {error_output}")
+                    return (False, "error","error")
+
+            return (False, "unknown", "unknown")
+
+        except Exception as e:
+            print(f"Unexpected Error: {e}")
+            return (False, "error", "error")
+
+    def check_NSWE_relation(self, relation_type: str, A_point: Dict, B_point: Dict) -> tuple[bool, str]:
+        """
+        检查两点之间的空间关系
 
         Args:
             relation_type: 关系类型 ('left', 'right', 'ahead', 'behind')
@@ -495,21 +587,30 @@ class SpatialRelationAnalyzer:
             B_point['x'], B_point['y']
         )
 
-        filename = f"{A_point['id']}_to_{B_point['id']}_{relation_type}.smt2"
+        filename = f"{B_point['id']}__NSWE_relative_to_{A_point['id']}_{relation_type}.smt2"
         file_path = self._write_smt_file(smt_code, filename)
 
-        success, result = self._run_smt_solver(file_path)
+        success, result ,output = self._run_smt_solver_NSWE_x(file_path)
+
+        x_str =''
+        if "range_x () int " in output:
+            start_x = output.find("range_x () int ") + len("range_x () int ")
+            end_x = output.find(")", start_x)
+            x_str = output[start_x:end_x].strip()
+
+
+
         print(f"DEBUG: {filename} -> success={success}, result={result}")  # 调试信息
 
         # 只有成功执行且结果为sat时才返回True
         if success and result == "sat":
-            return True
+            return (True,x_str)
         elif not success:
             # 记录错误日志
             print(f"Warning: SMT solver failed for {filename}: {result}")
 
-        return False
-    def get_all_relations(self, A_point: Dict, B_point: Dict) -> List[str]:
+        return (False,x_str)
+    def get_NSWE_relations(self, A_point: Dict, B_point: Dict) -> tuple[List[str], str] :
         """
         获取两点之间的所有可能关系
 
@@ -524,10 +625,60 @@ class SpatialRelationAnalyzer:
         relation_types = ['left', 'right', 'ahead', 'behind']
 
         for rel_type in relation_types:
-            if self.check_spatial_relation(rel_type, A_point, B_point):
+            bool_,range_x = self.check_NSWE_relation(rel_type, A_point, B_point)
+            if bool_:
                 relations.append(rel_type)
+                return (relations,range_x)  #立即返回
 
-        return relations
+        return (relations,range_x)
+
+    def get_numerical_relationship(self, A_point: Dict, B_point: Dict) -> Optional[Tuple[str, str]]:
+        smt_code = self._generate_relation_smt_code(
+            A_point['x'], A_point['y'], A_point['heading'],
+            B_point['x'], B_point['y']
+        )
+        filename = f"{B_point['id']}_local_xy_{A_point['id']}.smt2"
+        file_path = self._write_smt_file(smt_code, filename)
+        success, result, output = self._run_smt_solver_numerical_xy(file_path)
+
+        if not success or "unsat" in result:
+            return None
+
+        try:
+            # 解析 ((x ...) (y ...))
+            if "(x" in output and "(y" in output:
+                try:
+                    # 提取 x
+                    start_x = output.find("(x") + len("(x")
+                    end_x = output.find(")", start_x)
+                    x_str = output[start_x:end_x].strip()
+
+                    # 处理 Lisp 风格负数: "(- 10" → 去掉 '('，保留 "- 10" → float 能处理
+                    if x_str.startswith('('):
+                        x_str = x_str[1:].strip()  # 去掉开头的 '('
+                    x_val = x_str
+
+                    # 提取 y
+                    start_y = output.find("(y") + len("(y")
+                    end_y = output.find(")", start_y)
+                    y_str = output[start_y:end_y].strip()
+
+                    if y_str.startswith('('):
+                        y_str = y_str[1:].strip()
+                    y_val = y_str
+
+                    return x_val, y_val
+
+                except Exception as e:
+                    print(f"解析 x/y 失败: {e}")
+                    return None
+
+                return x_val, y_val
+        except Exception as e:
+            print(f"解析失败: {e}")
+            return None
+
+        return None
 
 
 class PointSequenceAnalyzer:
@@ -545,6 +696,8 @@ class PointSequenceAnalyzer:
         self.spatial_analyzer = SpatialRelationAnalyzer(temp_dir)
         self.orientation_analyzer = OrientationRelationAnalyzer(temp_dir)
         self.results = []
+
+
 
     def find_closest_reference(self, current_point: Dict, reference_points: List[Dict]) -> Dict:
         """
@@ -568,41 +721,77 @@ class PointSequenceAnalyzer:
     def analyze_point_relations(self, current_point: Dict, reference_points: List[Dict],
                                 use_closest_only: bool = True) -> Optional[str]:
         """
-        分析当前点与参考点的关系
+        分析当前点与参考点的关系：
+        1. 优先检查最近参考点是否有 NSWE 关系 → 有则返回；
+        2. 若无，检查其他参考点是否有 NSWE 关系 → 有则返回；
+        3. 若全无，计算最近参考点的数值相对位置关系；
+        4. 若仍无，返回无关系语句。
         """
-        if use_closest_only:
-            # 先检查最近的参考点
-            ref_point = self.find_closest_reference(current_point, reference_points)
-            relations = self.spatial_analyzer.get_all_relations(
-                ref_point, current_point
-            )
+        if not reference_points:
+            return f"{current_point['id']} has no reference point"
 
+        # 1. 找最近点
+        closest_ref = self.find_closest_reference(current_point, reference_points)
+
+        # 2. 检查最近点是否有 NSWE 关系
+        relations, range_x = self.spatial_analyzer.get_NSWE_relations(closest_ref, current_point)
+        if relations:
+            relation_str = "/".join(relations).upper()
+            if relation_str == "behind":
+                return f"{current_point['id']} is {relation_str}  {closest_ref['id']} by Range[{range_x},{range_x}+5]"
+            return f"{current_point['id']} is {relation_str} of {closest_ref['id']} by Range[{range_x},{range_x}+5]"
+
+        # 3. 检查其他点是否有 NSWE 关系
+        other_refs = [p for p in reference_points if p['id'] != closest_ref['id']]
+        for ref in other_refs:
+            relations, range_x = self.spatial_analyzer.get_NSWE_relations(ref, current_point)
             if relations:
                 relation_str = "/".join(relations).upper()
-                return f"{current_point['id']} is {relation_str} of {ref_point['id']}"
-            else:
-                # ❌ 修正：如果最近点没有关系，检查其他参考点
-                other_references = [p for p in reference_points if p['id'] != ref_point['id']]
-                if other_references:
-                    for other_ref in other_references:
-                        relations = self.spatial_analyzer.get_all_relations(
-                            other_ref, current_point
-                        )
-                        if relations:
-                            relation_str = "/".join(relations).upper()
-                            return f"{current_point['id']} is {relation_str} of {other_ref['id']}"
-        else:
-            # 分析所有参考点
-            for ref_point in reference_points:
-                relations = self.spatial_analyzer.get_all_relations(
-                    ref_point, current_point
-                )
+                return f"{current_point['id']} is {relation_str} of {closest_ref['id']} by Range[{range_x},{range_x}+5]"
 
-                if relations:
-                    relation_str = "/".join(relations).upper()
-                    return f"{current_point['id']} is {relation_str} of {ref_point['id']}"
+        # 4. 所有NSWE关系都无 → 用最近点计算数值关系
+        xy = self.spatial_analyzer.get_numerical_relationship(closest_ref, current_point)
+        if xy is not None:
+            x, y = xy
+            return f"{current_point['id']} is at range x[{x}, {x + ' +2'}] y[{y:}, {y + ' +2'}] of {closest_ref['id']}"
 
+        # 5. 彻底无关系
         return f"{current_point['id']} has no defined spatial relation with reference points"
+
+        # if use_closest_only:
+        #     # 先检查最近的参考点
+        #     ref_point = self.find_closest_reference(current_point, reference_points)
+        #     relations = self.spatial_analyzer.get_NSWE_relations(
+        #         ref_point, current_point
+        #     )
+        #
+        #     if relations:
+        #         relation_str = "/".join(relations).upper()
+        #         return f"{current_point['id']} is {relation_str} of {ref_point['id']}"
+        #     else:
+        #         # ❌ 修正：如果最近点没有关系，检查其他参考点
+        #         other_references = [p for p in reference_points if p['id'] != ref_point['id']]
+        #         if other_references:
+        #             for other_ref in other_references:
+        #                 relations = self.spatial_analyzer.get_NSWE_relations(
+        #                     other_ref, current_point
+        #                 )
+        #                 if relations:
+        #                     relation_str = "/".join(relations).upper()
+        #                     return f"{current_point['id']} is {relation_str} of {other_ref['id']}"
+        #
+        # else:
+        #     # 分析所有参考点
+        #     for ref_point in reference_points:
+        #         relations = self.spatial_analyzer.get_NSWE_relations(
+        #             ref_point, current_point
+        #         )
+        #
+        #         if relations:
+        #             relation_str = "/".join(relations).upper()
+        #             return f"{current_point['id']} is {relation_str} of {ref_point['id']}"
+        #
+        # return f"{current_point['id']} has no defined spatial relation with reference points"
 
     def analyze_orientation_relations(self, current_point: Dict, reference_points: List[Dict],
                                 use_closest_only: bool = True) -> List[str]:
@@ -650,7 +839,7 @@ class PointSequenceAnalyzer:
             angle = relation.split("_")[-1]
             results.append(f"{current_point['id']} has relative heading {angle}° to {ref_point['id']}")
         else:
-            results.append(f"{current_point['id']} is {relation} {ref_point['id']}")
+            results.append(f"{current_point['id']} is facing {relation} {ref_point['id']}")
 
     def analyze_sequence(self, points: List[Dict],
                          use_closest_only: bool = True) -> List[str]:
