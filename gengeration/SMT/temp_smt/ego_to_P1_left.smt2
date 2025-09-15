@@ -1,8 +1,8 @@
-; SMTÔ¼Êø£º¼ì²éBÊÇ·ñÔÚAµÄleft²àÇÒ¾àÀëÔÚ[range_x, range_x+5]·¶Î§ÄÚ
+; SMTçº¦æŸï¼šæ£€æŸ¥Bæ˜¯å¦åœ¨Açš„leftä¾§ä¸”è·ç¦»åœ¨[range_x, range_x+5]èŒƒå›´å†…
 
 
-(set-logic ALL) 
-; ¶¨Òå±äÁ¿
+(set-logic QF_NRA) 
+; å®šä¹‰å˜é‡
 (declare-const A_x Real)
 (declare-const A_y Real)
 (declare-const A_heading Real)
@@ -10,65 +10,56 @@
 (declare-const B_y Real)
 (declare-const range_x Real)
 
-; ÉèÖÃÒÑÖªÖµ
+; è®¾ç½®å·²çŸ¥å€¼
 (assert (= A_x 0.0))
 (assert (= A_y 0.0))
 (assert (= A_heading 90.0))
 (assert (= B_x 5.0))
-(assert (= B_y 0.0))
+(assert (= B_y 5.0))
 
 
-; ¼ÆËãÏà¶Ô×ø±ê£¬BÏà¶ÔA
+; è®¡ç®—ç›¸å¯¹åæ ‡ï¼ŒBç›¸å¯¹A
 (define-fun delta_x () Real (- B_x A_x))
 (define-fun delta_y () Real (- B_y A_y))
 
-; ¼ÆËã¾àÀë
+; è®¡ç®—è·ç¦»
 (define-fun distance () Real (sqrt (+ (* delta_x delta_x) (* delta_y delta_y))))
 
-; ¼ÆËãBÏà¶ÔÕıXÖáµÄ»¡¶È£¨È¡Öµ·¶Î§Îª[-pi,pi]£©
-(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
+; è®¡ç®—Bç›¸å¯¹æ­£Yè½´çš„è§’åº¦ï¼ˆå¼§åº¦
+; åæ ‡ç³»ä¸­ï¼Œæ­£Yè½´=0åº¦ï¼Œæ‰€ä»¥éœ€è¦è°ƒæ•´atan2çš„ä½¿ç”¨
+(define-fun angle_rad () Real 
+    (let ((raw_angle (- (atan2 delta_y delta_x) (/ 3.141592653589793 2.0))))
+        raw_angle))
 
-; ¹æ·¶»¯µ½ [0, 2¦Ğ) ·¶Î§
-(define-fun angle_rad_nom () Real
-    (let ((raw_angle angle_rad_x))
-        (ite (< raw_angle 0.0)
-             (+ raw_angle (* 2.0 3.141592653589793))
-             raw_angle)))
+; è½¬æ¢ä¸ºåº¦æ•°
+(define-fun angle_deg_raw () Real (* angle_rad (/ 180.0 3.141592653589793)))
 
-; ¼ÆËãBÏà¶ÔÕıyÖáµÄ»¡¶È
-(define-fun angle_rad_y () Real (- angle_rad_nom (/ 3.141592653589793 2.0)))
+; è§’åº¦è§„èŒƒåŒ–åˆ°[0, 360)
+(define-fun normalize_angle_deg ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
 
-; ¼ÆËãBÏà¶ÔAµÄ»¡¶È
-(define-fun angle_rad () Real (- angle_rad_y (/ (* A_heading 3.141592653589793) 180.0)))
+(define-fun normalized_angle () Real (normalize_angle_deg angle_deg_raw))
 
-; ×ª»»Îª¶ÈÊı
-(define-fun angle_deg () Real (* angle_rad (/ 180.0 3.141592653589793)))
+; leftè§’åº¦èŒƒå›´
+(define-fun theta_min () Real (normalize_angle_deg (+ A_heading 80.0)))
+(define-fun theta_max () Real (normalize_angle_deg (+ A_heading 100.0)))
 
-; ¹æ·¶»¯½Ç¶Èµ½[0, 360)
- 
-(define-fun normalize_angle ((theta Real)) Real
-    (ite (>= theta 360.0) (- theta 360.0) theta)) 
-
-(define-fun normalized_angle_deg () Real (normalize_angle angle_deg))
-
-; left½Ç¶È·¶Î§
-(define-fun theta_min () Real (normalize_angle (+ A_heading 80.0)))
-(define-fun theta_max () Real (normalize_angle (+ A_heading 100.0)))
-
-; ½Ç¶ÈÔ¼Êø£¨´¦Àí¿çÔ½0¶ÈµÄÇé¿ö£©
+; è§’åº¦çº¦æŸï¼ˆå¤„ç†è·¨è¶Š0åº¦çš„æƒ…å†µï¼‰
 (define-fun angle_constraint () Bool
     (ite (<= theta_min theta_max)
-        (and (>= normalized_angle_deg theta_min) (<= normalized_angle_deg theta_max))
-        (or (>= normalized_angle_deg theta_min) (<= normalized_angle_deg theta_max))))
+        (and (>= normalized_angle theta_min) (<= normalized_angle theta_max))
+        (or (>= normalized_angle theta_min) (<= normalized_angle theta_max))))
 
-; ¾àÀëÔ¼Êø
+; è·ç¦»çº¦æŸ
 (define-fun range_y () Real (+ range_x 5.0))
 (define-fun distance_constraint () Bool
     (and (>= distance range_x) (<= distance range_y)))
 
-; ×ÜÔ¼Êø
+; æ€»çº¦æŸ
 (assert (and angle_constraint distance_constraint))
 
-; ¼ì²é¿ÉÂú×ãĞÔ
+; æ£€æŸ¥å¯æ»¡è¶³æ€§
 (check-sat)
 (get-model)

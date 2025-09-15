@@ -4,6 +4,316 @@ import os
 from typing import List, Dict, Tuple, Optional
 
 
+class OrientationRelationAnalyzer:
+    """
+    基于SMT的朝向关系分析器
+    """
+
+    def __init__(self, temp_dir: str = "./temp_smt"):
+        self.temp_dir = temp_dir
+        os.makedirs(temp_dir, exist_ok=True)
+        self.dreal_path = "/opt/dreal/4.21.06.2/bin/dreal"  # 根据你的实际路径调整
+
+    def _generate_toward_smt(self, A_x: float, A_y: float, B_x: float, B_y: float, B_heading: float) -> str:
+        """
+        生成B朝向A的SMT约束
+        """
+        smt_code = f"""; SMT约束：检查B是否朝向A（角度容差±10度）
+(set-logic QF_NRA)
+
+; 定义变量
+(declare-const A_x Real)
+(declare-const A_y Real)
+(declare-const B_x Real)
+(declare-const B_y Real)
+(declare-const B_heading Real)  ; B的朝向角度
+
+; 设置已知值
+(assert (= A_x {A_x}))
+(assert (= A_y {A_y}))
+(assert (= B_x {B_x}))
+(assert (= B_y {B_y}))
+(assert (= B_heading {B_heading}))
+
+; 计算从B到A的方位角（相对于正Y轴，逆时针为正）
+(define-fun delta_x () Real (- A_x B_x))
+(define-fun delta_y () Real (- A_y B_y))
+
+; 计算相对于正X轴的角度
+(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
+
+; 转换为相对于正Y轴的角度（正Y轴=0度，逆时针增加）
+(define-fun bearing_angle_rad () Real (- angle_rad_x (/ {math.pi} 2.0) ))
+(define-fun bearing_angle_deg () Real (* bearing_angle_rad (/ 180.0 {math.pi})))
+
+; 角度规范化到[0, 360)
+(define-fun normalize_angle ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
+
+(define-fun normalized_bearing () Real (normalize_angle bearing_angle_deg))
+
+; 计算角度差
+(define-fun angle_diff_raw () Real (- normalized_bearing B_heading))
+(define-fun angle_diff () Real (normalize_angle angle_diff_raw))
+
+; 处理跨越0度的情况，取最小角度差
+(define-fun min_angle_diff () Real
+    (ite (> angle_diff 180.0)
+         (- 360.0 angle_diff)
+         angle_diff))
+
+; 朝向约束（±10度容差）
+(define-fun toward_constraint () Bool (<= min_angle_diff 10.0))
+
+; 总约束
+(assert toward_constraint)
+
+; 检查可满足性
+(check-sat)
+(get-model)
+"""
+        return smt_code
+
+    def _generate_away_smt(self, A_x: float, A_y: float, B_x: float, B_y: float, B_heading: float) -> str:
+        """
+        生成B背向A的SMT约束
+        """
+        smt_code = f"""; SMT约束：检查B是否背向A（角度容差±10度）
+(set-logic QF_NRA)
+
+; 定义变量
+(declare-const A_x Real)
+(declare-const A_y Real)
+(declare-const B_x Real)
+(declare-const B_y Real)
+(declare-const B_heading Real)
+
+; 设置已知值
+(assert (= A_x {A_x}))
+(assert (= A_y {A_y}))
+(assert (= B_x {B_x}))
+(assert (= B_y {B_y}))
+(assert (= B_heading {B_heading}))
+
+; 计算从A到B的方位角（B背向A的方向）
+(define-fun delta_x () Real (- B_x A_x))
+(define-fun delta_y () Real (- B_y A_y))
+
+; 计算相对于正X轴的角度
+(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
+
+; 转换为相对于正Y轴的角度
+(define-fun bearing_angle_rad () Real (- angle_rad_x (/ {math.pi} 2.0) ))
+(define-fun bearing_angle_deg () Real (* bearing_angle_rad (/ 180.0 {math.pi})))
+
+; 角度规范化
+(define-fun normalize_angle ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
+
+(define-fun normalized_bearing () Real (normalize_angle bearing_angle_deg))
+
+; 计算角度差
+(define-fun angle_diff_raw () Real (- normalized_bearing B_heading))
+(define-fun angle_diff () Real (normalize_angle angle_diff_raw))
+
+; 取最小角度差
+(define-fun min_angle_diff () Real
+    (ite (> angle_diff 180.0)
+         (- 360.0 angle_diff)
+         angle_diff))
+
+; 背向约束（±10度容差）
+(define-fun away_constraint () Bool (<= min_angle_diff 10.0))
+
+; 总约束
+(assert away_constraint)
+
+; 检查可满足性
+(check-sat)
+(get-model)
+"""
+        return smt_code
+
+    def _generate_relative_heading_smt(self, A_heading: float, B_heading: float,
+                                    tolerance: float = 10.0) -> str:
+        """
+        生成SMT约束：求解一个y，使得B相对A的朝向落在[y, y+tolerance]区间内（y是变量）
+        """
+        smt_code = f"""; SMT约束：求解y，使得相对朝向 ∈ [y, y+{tolerance}]
+(set-logic QF_NRA)
+
+; 定义变量
+(declare-const A_heading Real)
+(declare-const B_heading Real)
+(declare-const y Real) 
+
+; 设置已知值
+(assert (= A_heading {A_heading}))
+(assert (= B_heading {B_heading}))
+
+; 计算相对朝向
+(define-fun relative_heading () Real (- B_heading A_heading))
+
+        
+; 角度规范化到[0, 360)
+(define-fun normalize_0_360 ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
+        
+        
+
+(define-fun normalized_relative () Real (normalize_0_360  relative_heading))
+
+; 约束：normalized_relative ∈ [y, y + {tolerance}]
+(assert (>= normalized_relative y))
+(assert (<= normalized_relative (+ y {tolerance})))
+
+; 约束 y ∈ [0, 360)
+(assert (>= y 0.0))
+(assert (< y 360.0))
+
+; 求解y
+(check-sat)
+(get-value (y))
+
+; 检查可满足性
+(check-sat)
+(get-model)
+"""
+        return smt_code
+
+    def _write_smt_file(self, smt_code: str, filename: str) -> str:
+        file_path = os.path.join(self.temp_dir, filename)
+        with open(file_path, "w") as f:
+            f.write(smt_code)
+        return file_path
+
+    def _run_smt_solver(self, file_path: str) -> tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                [self.dreal_path, file_path],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            output = result.stdout.strip()
+
+            # 解析输出
+            if output:
+                lines = output.split('\n')
+                for line in lines:
+                    line = line.strip().lower()
+                    if line in ["sat", "unsat"] or line.startswith("delta-sat"):
+                        if line == "unsat":
+                            return (True, "unsat")
+                        else:
+                            return (True, "sat")
+
+            # 错误处理
+            error_output = result.stderr.strip()
+            if error_output and "error" in error_output.lower() and "model is not available" not in error_output.lower():
+                print(f"dReal Error: {error_output}")
+                return (False, "error")
+
+            return (False, "unknown")
+
+        except Exception as e:
+            print(f"Solver Error: {e}")
+            return (False, "error")
+
+    def check_toward_relation(self, A_point: Dict, B_point: Dict) -> bool:
+        """
+        检查B是否朝向A
+        """
+        smt_code = self._generate_toward_smt(
+            A_point['x'], A_point['y'],
+            B_point['x'], B_point['y'],
+            B_point['heading']
+        )
+
+        filename = f"{B_point['id']}_toward_{A_point['id']}.smt2"
+        file_path = self._write_smt_file(smt_code, filename)
+
+        success, result = self._run_smt_solver(file_path)
+        return success and result == "sat"
+
+    def check_away_relation(self, A_point: Dict, B_point: Dict) -> bool:
+        """
+        检查B是否背向A
+        """
+        smt_code = self._generate_away_smt(
+            A_point['x'], A_point['y'],
+            B_point['x'], B_point['y'],
+            B_point['heading']
+        )
+
+        filename = f"{B_point['id']}_away_{A_point['id']}.smt2"
+        file_path = self._write_smt_file(smt_code, filename)
+
+        success, result = self._run_smt_solver(file_path)
+        return success and result == "sat"
+
+    def get_relative_heading_relation(self, A_point: Dict, B_point: Dict,
+                                         tolerance: float = 10.0) -> bool:
+        """
+        生成SMT约束：求解一个y，使得B相对A的朝向落在[y, y+tolerance]区间内（y是变量）
+        """
+        smt_code = self._generate_relative_heading_smt(
+            A_point['heading'], B_point['heading'],tolerance
+        )
+
+        filename = f"{B_point['id']}_find_y_relative_{A_point['id']}.smt2"
+        file_path = self._write_smt_file(smt_code, filename)
+
+        success, result = self._run_smt_solver(file_path)
+        if not success or "unsat" in result:
+            return None
+
+        # 解析 (get-value (y)) 的输出，例如: ((y 37.5))
+        try:
+            if "(y" in result:
+                start = result.find("(y") + len("(y")
+                end = result.find(")", start)
+                value_str = result[start:end].strip()
+                y_value = float(value_str)
+                # 确保 y ∈ [0, 360)
+                y_value = y_value % 360.0
+                if y_value < 0:
+                    y_value += 360.0
+                return y_value
+        except Exception as e:
+            print(f"解析SMT结果失败: {e}")
+            return None
+
+        return None
+
+    def get_orientation_relation(self, A_point: Dict, B_point: Dict) -> str:
+        """
+        获取两点间的朝向关系
+        """
+        # 优先检查toward关系
+        if self.check_toward_relation(A_point, B_point):
+            return "toward"
+
+        # 检查away关系
+        elif self.check_away_relation(A_point, B_point):
+            return "away"
+
+        # 检查相对朝向关系
+        else:
+            y_value = self.get_relative_heading_relation(A_point, B_point, tolerance=10.0)
+            if y_value is not None:
+                return f"relative_heading_{y_value:.6g}"
+
+        return "none"
+
+
 class SpatialRelationAnalyzer:
     """
     空间关系分析器，用于判断点与点之间的相对位置关系
@@ -19,7 +329,7 @@ class SpatialRelationAnalyzer:
         self.temp_dir = temp_dir
         os.makedirs(temp_dir, exist_ok=True)
 
-    def _generate_smt_code(self, relation_type: str, A_x: float, A_y: float, A_heading: float,
+    def _generate_NSWE_relation_smt_code(self, relation_type: str, A_x: float, A_y: float, A_heading: float,
                            B_x: float, B_y: float) -> str:
         """
         生成SMT约束代码
@@ -72,41 +382,32 @@ class SpatialRelationAnalyzer:
 ; 计算距离
 (define-fun distance () Real (sqrt (+ (* delta_x delta_x) (* delta_y delta_y))))
 
-; 计算B相对正X轴的弧度（取值范围为[-pi,pi]）
-(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
-
-; 规范化到 [0, 2π) 范围
-(define-fun angle_rad_nom () Real
-    (let ((raw_angle angle_rad_x))
-        (ite (< raw_angle 0.0)
-             (+ raw_angle (* 2.0 {math.pi}))
-             raw_angle)))
-
-; 计算B相对正y轴的弧度
-(define-fun angle_rad_y () Real (- angle_rad_nom (/ {math.pi} 2.0)))
-
-; 计算B相对A的弧度
-(define-fun angle_rad () Real (- angle_rad_y (/ (* A_heading {math.pi}) 180.0)))
+; 计算B相对正Y轴的角度（弧度
+; 坐标系中，正Y轴=0度，所以需要调整atan2的使用
+(define-fun angle_rad () Real 
+    (let ((raw_angle (- (atan2 delta_y delta_x) (/ {math.pi} 2.0))))
+        raw_angle))
 
 ; 转换为度数
-(define-fun angle_deg () Real (* angle_rad (/ 180.0 {math.pi})))
+(define-fun angle_deg_raw () Real (* angle_rad (/ 180.0 {math.pi})))
 
-; 规范化角度到[0, 360)
- 
-(define-fun normalize_angle ((theta Real)) Real
-    (ite (>= theta 360.0) (- theta 360.0) theta)) 
+; 角度规范化到[0, 360)
+(define-fun normalize_angle_deg ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
 
-(define-fun normalized_angle_deg () Real (normalize_angle angle_deg))
+(define-fun normalized_angle () Real (normalize_angle_deg angle_deg_raw))
 
 ; {relation_type}角度范围
-(define-fun theta_min () Real (normalize_angle (+ A_heading {min_angle}.0)))
-(define-fun theta_max () Real (normalize_angle (+ A_heading {max_angle}.0)))
+(define-fun theta_min () Real (normalize_angle_deg (+ A_heading {min_angle}.0)))
+(define-fun theta_max () Real (normalize_angle_deg (+ A_heading {max_angle}.0)))
 
 ; 角度约束（处理跨越0度的情况）
 (define-fun angle_constraint () Bool
     (ite (<= theta_min theta_max)
-        (and (>= normalized_angle_deg theta_min) (<= normalized_angle_deg theta_max))
-        (or (>= normalized_angle_deg theta_min) (<= normalized_angle_deg theta_max))))
+        (and (>= normalized_angle theta_min) (<= normalized_angle theta_max))
+        (or (>= normalized_angle theta_min) (<= normalized_angle theta_max))))
 
 ; 距离约束
 (define-fun range_y () Real (+ range_x 5.0))
@@ -140,58 +441,40 @@ class SpatialRelationAnalyzer:
 
     def _run_smt_solver(self, file_path: str) -> tuple[bool, str]:
         """
-        运行SMT求解器
-
-        Args:
-            file_path: SMT文件路径
-
-        Returns:
-            tuple[bool, str]: (是否成功执行, 结果描述)
-            - (True, "sat") 表示约束满足
-            - (True, "unsat") 表示约束不满足
-            - (False, "error") 表示求解器执行出错
-            - (False, "timeout") 表示超时
-            - (False, "not_found") 表示求解器未找到
+        运行dreal求解器
         """
-        """
-           运行MathSAT求解器
-           """
         try:
             result = subprocess.run(
-                ["mathsat.exe", file_path],
+                ["/opt/dreal/4.21.06.2/bin/dreal", file_path],
                 capture_output=True,
                 text=True,
                 timeout=30
             )
 
-            output = result.stdout.strip()
+            output = result.stdout.strip().lower()
+
+            # 按行解析，确保精确匹配
+            lines = output.split('\n')
+            for line in lines:
+                line = line.strip().lower()
+                # 精确匹配
+                if line in ["sat", "unsat"] or line.startswith("delta-sat"):
+                    if line == "unsat":
+                        return (True, "unsat")
+                    else:
+                        return (True, "sat")
+
+            # 错误处理
             error_output = result.stderr.strip()
+            if error_output:
+                if "error" in error_output.lower() and "model is not available" not in error_output.lower():
+                    print(f"dReal Error: {error_output}")
+                    return (False, "error")
 
-            if error_output or "error" in output.lower():
-                print(f"MathSAT Error: {error_output}")
-                return (False, "error")
+            return (False, "unknown")
 
-            # MathSAT输出示例：
-            # sat
-            # (model ...)
-            # 或
-            # unsat
-
-            if output:
-                first_line = output.split('\n')[0].strip().lower()
-                if first_line == "sat":
-                    return (True, "sat")
-                elif first_line == "unsat":
-                    return (True, "unsat")
-
-            return (False, "error")
-
-        except subprocess.TimeoutExpired:
-            return (False, "timeout")
-        except FileNotFoundError:
-            return (False, "not_found")
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Unexpected Error: {e}")
             return (False, "error")
 
     def check_spatial_relation(self, relation_type: str, A_point: Dict, B_point: Dict) -> bool:
@@ -206,7 +489,7 @@ class SpatialRelationAnalyzer:
         Returns:
             是否满足指定关系
         """
-        smt_code = self._generate_smt_code(
+        smt_code = self._generate_NSWE_relation_smt_code(
             relation_type,
             A_point['x'], A_point['y'], A_point['heading'],
             B_point['x'], B_point['y']
@@ -216,6 +499,7 @@ class SpatialRelationAnalyzer:
         file_path = self._write_smt_file(smt_code, filename)
 
         success, result = self._run_smt_solver(file_path)
+        print(f"DEBUG: {filename} -> success={success}, result={result}")  # 调试信息
 
         # 只有成功执行且结果为sat时才返回True
         if success and result == "sat":
@@ -259,6 +543,7 @@ class PointSequenceAnalyzer:
             temp_dir: 临时文件目录
         """
         self.spatial_analyzer = SpatialRelationAnalyzer(temp_dir)
+        self.orientation_analyzer = OrientationRelationAnalyzer(temp_dir)
         self.results = []
 
     def find_closest_reference(self, current_point: Dict, reference_points: List[Dict]) -> Dict:
@@ -319,10 +604,58 @@ class PointSequenceAnalyzer:
 
         return f"{current_point['id']} has no defined spatial relation with reference points"
 
+    def analyze_orientation_relations(self, current_point: Dict, reference_points: List[Dict],
+                                use_closest_only: bool = True) -> List[str]:
+        """
+        分析点序列的朝向关系（支持优先最近点策略）
+        """
+        results = []
+
+
+        if use_closest_only:
+            # 1. 先找最近的参考点
+            ref_point = self.find_closest_reference(current_point, reference_points)
+            relation = self.orientation_analyzer.get_orientation_relation(ref_point, current_point)
+
+            if relation != "none":
+                self._format_orientation_result(relation, current_point, ref_point, results)
+                found = True
+            else:
+                # 2. 最近点无关系 → 检查其他点
+                other_refs = [p for p in reference_points if p['id'] != ref_point['id']]
+                for other_ref in other_refs:
+                    relation = self.orientation_analyzer.get_orientation_relation(other_ref, current_point)
+                    if relation != "none":
+                        self._format_orientation_result(relation, current_point, other_ref, results)
+                        found = True
+                        break
+        else:
+            # 3. 分析所有参考点，找到第一个有效关系就记录（或你想记录所有？这里按“首个有效”处理）
+            for ref_point in reference_points:
+                relation = self.orientation_analyzer.get_orientation_relation(ref_point, current_point)
+                if relation != "none":
+                    self._format_orientation_result(relation, current_point, ref_point, results)
+                    found = True
+                    break  # 如需记录所有关系，移除 break
+
+        # 可选：记录无关系的情况（按你上一个函数风格）
+            if not found:
+                results.append(f"{current_point['id']} has no defined orientation relation with reference points")
+
+        return results
+
+    def _format_orientation_result(self, relation: str, current_point: Dict, ref_point: Dict, results: List[str]):
+        """辅助方法：格式化朝向关系字符串"""
+        if relation.startswith("relative_heading_"):
+            angle = relation.split("_")[-1]
+            results.append(f"{current_point['id']} has relative heading {angle}° to {ref_point['id']}")
+        else:
+            results.append(f"{current_point['id']} is {relation} {ref_point['id']}")
+
     def analyze_sequence(self, points: List[Dict],
                          use_closest_only: bool = True) -> List[str]:
         """
-        分析点序列
+        分析点序列（空间关系 + 朝向关系）
 
         Args:
             points: 点列表，第一个点应该是ego
@@ -342,12 +675,18 @@ class PointSequenceAnalyzer:
             # 参考点包括ego和前面的所有点
             reference_points = points[:i]
 
-            relation = self.analyze_point_relations(
+            # 1. 分析空间关系
+            spatial_relation = self.analyze_point_relations(
                 current_point, reference_points, use_closest_only
             )
+            if spatial_relation:
+                results.append(spatial_relation)
 
-            if relation:
-                results.append(relation)
+            # 2. 分析朝向关系（返回列表，需展开）
+            orientation_relations = self.analyze_orientation_relations(
+                current_point, reference_points, use_closest_only
+            )
+            results.extend(orientation_relations)  # ← 关键：用 extend 展开列表
 
         return results
 
@@ -363,28 +702,41 @@ class PointSequenceAnalyzer:
             print(f"{i}. {result}")
 
 
+
+
+
 # 使用示例
 def main():
     """
     主函数示例
     """
     # 定义点数据
-    points = [
+    points1 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 90.0},
         {"id": "P1", "x": 5.0, "y": 0.0, "heading": 90.0},
         {"id": "P2", "x": 10.0, "y": -2.0, "heading": 90.0},
         {"id": "P3", "x": 8.0, "y": 3.0, "heading": 90.0},
         {"id": "P4", "x": 15.0, "y": 0.0, "heading": 90.0}
     ]
+    points2 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 90.0},
+        {"id": "P1", "x": 5.0, "y": 5.0, "heading": 135.0},
+        {"id": "P2", "x": 5.0, "y": 0.0, "heading": 0.0},
+        {"id": "P3", "x": 0.0, "y": 8.0, "heading": 90.0},
+        {"id": "P4", "x": -10, "y": 0.0, "heading": 90.0},
+        {"id": "P5", "x": -10, "y": 5, "heading": 90.0}
+    ]
 
     # 创建分析器
     analyzer = PointSequenceAnalyzer(temp_dir="./temp_smt")
 
-    # 分析序列
-    results = analyzer.analyze_sequence(points, use_closest_only=True)
 
-    # 打印结果
-    analyzer.print_results(results)
+    spatial_results = analyzer.analyze_sequence(points2)
+    for i, result in enumerate(spatial_results, 1):
+        print(f"{i}. {result}")
+
+
+
 
     # 清理临时文件（可选）
     # import shutil

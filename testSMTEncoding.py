@@ -1,11 +1,11 @@
 
 from src.scenic.domains.driving.roads import NetworkElement, ManeuverType, Network, Road, Lane, LaneSection, Intersection
 
-from nuscenes.map_expansion.map_api import NuScenesMap
+#from nuscenes.map_expansion.map_api import NuScenesMap
 
-network = Network.fromPickle('D:/Scenic-main/Scenic-scenic-query/src/scenic/domains/driving/boston-network.pickle')
-dataroot = 'D:/Scenic-main/nuscenesData/dataset'
-map_api = NuScenesMap(dataroot=dataroot, map_name='boston-seaport')
+network = Network.fromPickle('/home/hps/scenic2.x/gengeration/boston-network.pickle')
+#dataroot = 'D:/Scenic-main/nuscenesData/dataset'
+#map_api = NuScenesMap(dataroot=dataroot, map_name='boston-seaport')
 
 from src.scenic.core.vectors import Vector
 from src.scenic.core.regions import CircularRegion

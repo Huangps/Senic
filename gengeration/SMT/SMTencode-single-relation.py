@@ -3,17 +3,14 @@ import math
 
 def Left_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt2"):
     """
-    生成SMT约束文件，检查B是否在A的左侧且距离在[range_x, range_y]范围内。
+    生成SMT约束文件，检查B是否在A的left且距离在[range_x, range_x+5]范围内。
 
-    参数:
-        A_x, A_y: A的坐标。
-        A_heading: A的朝向角度（度数）。
-        B_x, B_y: B的坐标。
-        range_x, range_y: 距离范围。
-        output_file: 输出的SMT文件路径（默认: "constraints.smt2"）。
+    坐标系：正Y轴=0度，角度逆时针增加
+    正Y轴=0°, 负X轴=90°, 负Y轴=180°, 正X轴=270°
     """
-    smt_code = f"""; SMT约束：检查B是否在A的左侧且距离在[range_x, range_x + 5]范围内
-
+    smt_code = f"""; SMT约束：检查B是否在A的left且距离在[range_x, range_x+5]范围内
+; 坐标系：正Y轴=0度，角度逆时针增加
+(set-logic QF_NRA)
 
 ; 定义变量
 (declare-const A_x Real)
@@ -22,7 +19,6 @@ def Left_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt
 (declare-const B_x Real)
 (declare-const B_y Real)
 (declare-const range_x Real)
-
 
 ; 设置已知值
 (assert (= A_x {A_x}))
@@ -38,41 +34,34 @@ def Left_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt
 ; 计算距离
 (define-fun distance () Real (sqrt (+ (* delta_x delta_x) (* delta_y delta_y))))
 
-; 计算B相对正X轴的弧度（取值范围为[-pi,pi]）
-(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
-
-; 规范化到 [0, 2π) 范围
-(define-fun angle_rad_nom () Real
-    (let ((raw_angle angle_rad_x))
-        (ite (< raw_angle 0.0)
-             (+ raw_angle (* 2.0 3.141592653589793))
-             raw_angle)))
-
-; 计算B相对正y轴的弧度
-(define-fun angle_rad_y () Real (-  angle_rad_nom  (/ {math.pi} 2) ))
-
-; 计算B相对A的弧度
-(define-fun angle_rad () Real (- angle_rad_y A_heading))
+; 计算B相对正Y轴的角度（弧度）
+; 坐标系中，正Y轴=0度，所以需要调整atan2的使用
+(define-fun angle_rad () Real 
+    (let ((raw_angle (- (atan2 delta_y delta_x) (/ {math.pi} 2.0))))
+        raw_angle))
 
 ; 转换为度数
-(define-fun angle_deg () Real (* angle_rad (/ 180.0 {math.pi})))
+(define-fun angle_deg_raw () Real (* angle_rad (/ 180.0 {math.pi})))
 
-; 左边角度范围（A_heading + 80度到A_heading + 100度）
-(define-fun theta_left_min () Real (+ A_heading 80.0))
-(define-fun theta_left_max () Real (+ A_heading 100.0))
+; 角度规范化到[0, 360)
+(define-fun normalize_angle ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
 
-; 规范化角度到[0, 360)
-(define-fun normalize_angle ((theta Real)) Real
-    (ite (>= theta 360.0) (- theta 360.0) theta))
+(define-fun angle_deg_absolute () Real (normalize_angle angle_deg_raw))
 
-(define-fun theta_left_min_norm () Real (normalize_angle theta_left_min))
-(define-fun theta_left_max_norm () Real (normalize_angle theta_left_max))
+; 计算B相对于A朝向的相对角度
+(define-fun angle_deg_relative () Real (- angle_deg_absolute A_heading))
+(define-fun angle_deg () Real (normalize_angle angle_deg_relative))
 
-; 角度约束（处理跨越0度的情况）
+; left角度范围：80-100度（相对于A的朝向）
+(define-fun theta_min () Real 80.0)
+(define-fun theta_max () Real 100.0)
+
+; 角度约束
 (define-fun angle_constraint () Bool
-    (ite (<= theta_left_min_norm theta_left_max_norm)
-        (and (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))
-        (or (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))))
+    (and (>= angle_deg theta_min) (<= angle_deg theta_max)))
 
 ; 距离约束
 (define-fun range_y () Real (+ range_x 5.0))
@@ -93,19 +82,18 @@ def Left_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt
 
     print(f"SMT约束文件已生成: {output_file}")
 
+
 def Right_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt2"):
     """
-    生成SMT约束文件，检查B是否在A的左侧且距离在[range_x, range_y]范围内。
+    生成SMT约束文件，检查B是否在A的Right且距离在[range_x, range_x+5]范围内。
 
-    参数:
-        A_x, A_y: A的坐标。
-        A_heading: A的朝向角度（度数）。
-        B_x, B_y: B的坐标。
-        range_x, range_y: 距离范围。
-        output_file: 输出的SMT文件路径（默认: "constraints.smt2"）。
+    坐标系：正Y轴=0度，角度逆时针增加
+    正Y轴=0°, 负X轴=90°, 负Y轴=180°, 正X轴=270°
     """
-    smt_code = f"""; SMT约束：检查B是否在A的左侧且距离在[range_x, range_x+5]范围内
+    smt_code = f"""; SMT约束：检查B是否在A的Right且距离在[range_x, range_x+5]范围内
+; 坐标系：正Y轴=0度，角度逆时针增加
 
+(set-logic QF_NRA)
 
 ; 定义变量
 (declare-const A_x Real)
@@ -115,14 +103,12 @@ def Right_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.sm
 (declare-const B_y Real)
 (declare-const range_x Real)
 
-
 ; 设置已知值
 (assert (= A_x {A_x}))
 (assert (= A_y {A_y}))
 (assert (= A_heading {A_heading}))
 (assert (= B_x {B_x}))
 (assert (= B_y {B_y}))
-
 
 ; 计算相对坐标，B相对A
 (define-fun delta_x () Real (- B_x A_x))
@@ -131,41 +117,34 @@ def Right_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.sm
 ; 计算距离
 (define-fun distance () Real (sqrt (+ (* delta_x delta_x) (* delta_y delta_y))))
 
-; 计算B相对正X轴的弧度（取值范围为[-pi,pi]）
-(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
-
-; 规范化到 [0, 2π) 范围
-(define-fun angle_rad_nom () Real
-    (let ((raw_angle angle_rad_x))
-        (ite (< raw_angle 0.0)
-             (+ raw_angle (* 2.0 3.141592653589793))
-             raw_angle)))
-
-; 计算B相对正y轴的弧度
-(define-fun angle_rad_y () Real (-  angle_rad_nom  (/ {math.pi} 2) ))
-
-; 计算B相对A的弧度
-(define-fun angle_rad () Real (- angle_rad_y A_heading))
+; 计算B相对正Y轴的角度（弧度
+; 坐标系中，正Y轴=0度，所以需要调整atan2的使用
+(define-fun angle_rad () Real 
+    (let ((raw_angle (- (atan2 delta_y delta_x) (/ {math.pi} 2.0))))
+        raw_angle))
 
 ; 转换为度数
-(define-fun angle_deg () Real (* angle_rad (/ 180.0 {math.pi})))
+(define-fun angle_deg_raw () Real (* angle_rad (/ 180.0 {math.pi})))
 
-; 右边角度范围（A_heading + 260度到A_heading + 280度）
-(define-fun theta_left_min () Real (+ A_heading 80.0))
-(define-fun theta_left_max () Real (+ A_heading 100.0))
+; 角度规范化到[0, 360)
+(define-fun normalize_angle ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
 
-; 规范化角度到[0, 360)
-(define-fun normalize_angle ((theta Real)) Real
-    (ite (>= theta 360.0) (- theta 360.0) theta))
+(define-fun angle_deg_absolute () Real (normalize_angle angle_deg_raw))
 
-(define-fun theta_left_min_norm () Real (normalize_angle theta_left_min))
-(define-fun theta_left_max_norm () Real (normalize_angle theta_left_max))
+; 计算B相对于A朝向的相对角度
+(define-fun angle_deg_relative () Real (- angle_deg_absolute A_heading))
+(define-fun angle_deg () Real (normalize_angle angle_deg_relative))
 
-; 角度约束（处理跨越0度的情况）
+; Right角度范围：260-280度（相对于A的朝向）
+(define-fun theta_min () Real 260.0)
+(define-fun theta_max () Real 280.0)
+
+; 角度约束
 (define-fun angle_constraint () Bool
-    (ite (<= theta_left_min_norm theta_left_max_norm)
-        (and (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))
-        (or (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))))
+    (and (>= angle_deg theta_min) (<= angle_deg theta_max)))
 
 ; 距离约束
 (define-fun range_y () Real (+ range_x 5.0))
@@ -188,17 +167,15 @@ def Right_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.sm
 
 def Ahead_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt2"):
     """
-    生成SMT约束文件，检查B是否在A的左侧且距离在[range_x, range_y]范围内。
+    生成SMT约束文件，检查B是否在A的Ahead且距离在[range_x, range_x+5]范围内。
 
-    参数:
-        A_x, A_y: A的坐标。
-        A_heading: A的朝向角度（度数）。
-        B_x, B_y: B的坐标。
-        range_x, range_y: 距离范围。
-        output_file: 输出的SMT文件路径（默认: "constraints.smt2"）。
+    坐标系：正Y轴=0度，角度逆时针增加
+    正Y轴=0°, 负X轴=90°, 负Y轴=180°, 正X轴=270°
     """
-    smt_code = f"""; SMT约束：检查B是否在A的左侧且距离在[range_x, range_x+5]范围内
+    smt_code = f"""; SMT约束：检查B是否在A的Ahead且距离在[range_x, range_x+5]范围内
+; 坐标系：正Y轴=0度，角度逆时针增加
 
+(set-logic QF_NRA)
 
 ; 定义变量
 (declare-const A_x Real)
@@ -208,14 +185,12 @@ def Ahead_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.sm
 (declare-const B_y Real)
 (declare-const range_x Real)
 
-
 ; 设置已知值
 (assert (= A_x {A_x}))
 (assert (= A_y {A_y}))
 (assert (= A_heading {A_heading}))
 (assert (= B_x {B_x}))
 (assert (= B_y {B_y}))
-
 
 ; 计算相对坐标，B相对A
 (define-fun delta_x () Real (- B_x A_x))
@@ -224,41 +199,34 @@ def Ahead_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.sm
 ; 计算距离
 (define-fun distance () Real (sqrt (+ (* delta_x delta_x) (* delta_y delta_y))))
 
-; 计算B相对正X轴的弧度（取值范围为[-pi,pi]）
-(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
-
-; 规范化到 [0, 2π) 范围
-(define-fun angle_rad_nom () Real
-    (let ((raw_angle angle_rad_x))
-        (ite (< raw_angle 0.0)
-             (+ raw_angle (* 2.0 3.141592653589793))
-             raw_angle)))
-
-; 计算B相对正y轴的弧度
-(define-fun angle_rad_y () Real (-  angle_rad_nom  (/ {math.pi} 2) ))
-
-; 计算B相对A的弧度
-(define-fun angle_rad () Real (- angle_rad_y A_heading))
+; 计算B相对正Y轴的角度（弧度）- 正确的方法
+; 坐标系中，正Y轴=0度，所以需要调整atan2的使用
+(define-fun angle_rad () Real 
+    (let ((raw_angle (- (atan2 delta_y delta_x) (/ {math.pi} 2.0))))
+        raw_angle))
 
 ; 转换为度数
-(define-fun angle_deg () Real (* angle_rad (/ 180.0 {math.pi})))
+(define-fun angle_deg_raw () Real (* angle_rad (/ 180.0 {math.pi})))
 
-; 前方角度范围（A_heading - 10度到A_heading + 10度）
-(define-fun theta_left_min () Real (- A_heading 10.0))
-(define-fun theta_left_max () Real (+ A_heading 10.0))
+; 角度规范化到[0, 360)
+(define-fun normalize_angle ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
 
-; 规范化角度到[0, 360)
-(define-fun normalize_angle ((theta Real)) Real
-    (ite (>= theta 360.0) (- theta 360.0) theta))
+(define-fun angle_deg_absolute () Real (normalize_angle angle_deg_raw))
 
-(define-fun theta_left_min_norm () Real (normalize_angle theta_left_min))
-(define-fun theta_left_max_norm () Real (normalize_angle theta_left_max))
+; 计算B相对于A朝向的相对角度
+(define-fun angle_deg_relative () Real (- angle_deg_absolute A_heading))
+(define-fun angle_deg () Real (normalize_angle angle_deg_relative))
 
-; 角度约束（处理跨越0度的情况）
+; Ahead角度范围：-10 - 10度（相对于A的朝向）
+(define-fun theta_min () Real - 10.0)
+(define-fun theta_max () Real 10.0)
+
+; 角度约束
 (define-fun angle_constraint () Bool
-    (ite (<= theta_left_min_norm theta_left_max_norm)
-        (and (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))
-        (or (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))))
+    (and (>= angle_deg theta_min) (<= angle_deg theta_max)))
 
 ; 距离约束
 (define-fun range_y () Real (+ range_x 5.0))
@@ -278,20 +246,19 @@ def Ahead_of_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.sm
         f.write(smt_code)
 
     print(f"SMT约束文件已生成: {output_file}")
+
 
 def Behind_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt2"):
     """
-    生成SMT约束文件，检查B是否在A的左侧且距离在[range_x, range_y]范围内。
+    生成SMT约束文件，检查B是否在A的后方且距离在[range_x, range_x+5]范围内。
 
-    参数:
-        A_x, A_y: A的坐标。
-        A_heading: A的朝向角度（度数）。
-        B_x, B_y: B的坐标。
-        range_x, range_y: 距离范围。
-        output_file: 输出的SMT文件路径（默认: "constraints.smt2"）。
+    坐标系：正Y轴=0度，角度逆时针增加
+    正Y轴=0°, 负X轴=90°, 负Y轴=180°, 正X轴=270°
     """
-    smt_code = f"""; SMT约束：检查B是否在A的左侧且距离在[range_x, range_x+5]范围内
+    smt_code = f"""; SMT约束：检查B是否在A的后方且距离在[range_x, range_x+5]范围内
+; 坐标系：正Y轴=0度，角度逆时针增加
 
+(set-logic QF_NRA)
 
 ; 定义变量
 (declare-const A_x Real)
@@ -301,14 +268,12 @@ def Behind_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt2
 (declare-const B_y Real)
 (declare-const range_x Real)
 
-
 ; 设置已知值
 (assert (= A_x {A_x}))
 (assert (= A_y {A_y}))
 (assert (= A_heading {A_heading}))
 (assert (= B_x {B_x}))
 (assert (= B_y {B_y}))
-
 
 ; 计算相对坐标，B相对A
 (define-fun delta_x () Real (- B_x A_x))
@@ -317,41 +282,34 @@ def Behind_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt2
 ; 计算距离
 (define-fun distance () Real (sqrt (+ (* delta_x delta_x) (* delta_y delta_y))))
 
-; 计算B相对正X轴的弧度（取值范围为[-pi,pi]）
-(define-fun angle_rad_x () Real (atan2 delta_y delta_x))
-
-; 规范化到 [0, 2π) 范围
-(define-fun angle_rad_nom () Real
-    (let ((raw_angle angle_rad_x))
-        (ite (< raw_angle 0.0)
-             (+ raw_angle (* 2.0 3.141592653589793))
-             raw_angle)))
-
-; 计算B相对正y轴的弧度
-(define-fun angle_rad_y () Real (-  angle_rad_nom  (/ {math.pi} 2) ))
-
-; 计算B相对A的弧度
-(define-fun angle_rad () Real (- angle_rad_y A_heading))
+; 计算B相对正Y轴的角度（弧度）- 正确的方法
+; 坐标系中，正Y轴=0度，所以需要调整atan2的使用
+(define-fun angle_rad () Real 
+    (let ((raw_angle (- (atan2 delta_y delta_x) (/ {math.pi} 2.0))))
+        raw_angle))
 
 ; 转换为度数
-(define-fun angle_deg () Real (* angle_rad (/ 180.0 {math.pi})))
+(define-fun angle_deg_raw () Real (* angle_rad (/ 180.0 {math.pi})))
 
-; 前方角度范围（A_heading + 170度到A_heading + 180度）
-(define-fun theta_left_min () Real (+ A_heading 170.0))
-(define-fun theta_left_max () Real (+ A_heading 180.0))
+; 角度规范化到[0, 360)
+(define-fun normalize_angle ((angle Real)) Real
+    (ite (>= angle 360.0) (- angle 360.0)
+         (ite (< angle 0.0) (+ angle 360.0)
+              angle)))
 
-; 规范化角度到[0, 360)
-(define-fun normalize_angle ((theta Real)) Real
-    (ite (>= theta 360.0) (- theta 360.0) theta))
+(define-fun angle_deg_absolute () Real (normalize_angle angle_deg_raw))
 
-(define-fun theta_left_min_norm () Real (normalize_angle theta_left_min))
-(define-fun theta_left_max_norm () Real (normalize_angle theta_left_max))
+; 计算B相对于A朝向的相对角度
+(define-fun angle_deg_relative () Real (- angle_deg_absolute A_heading))
+(define-fun angle_deg () Real (normalize_angle angle_deg_relative))
 
-; 角度约束（处理跨越0度的情况）
+; 后方角度范围：170-190度（相对于A的朝向）
+(define-fun theta_min () Real 170.0)
+(define-fun theta_max () Real 190.0)
+
+; 角度约束
 (define-fun angle_constraint () Bool
-    (ite (<= theta_left_min_norm theta_left_max_norm)
-        (and (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))
-        (or (>= angle_deg theta_left_min_norm) (<= angle_deg theta_left_max_norm))))
+    (and (>= angle_deg theta_min) (<= angle_deg theta_max)))
 
 ; 距离约束
 (define-fun range_y () Real (+ range_x 5.0))
@@ -372,3 +330,5 @@ def Behind_by_range(A_x, A_y, A_heading, B_x, B_y, output_file="constraints.smt2
 
     print(f"SMT约束文件已生成: {output_file}")
 
+
+Behind_by_range(0, 0, 90, 5, 0, output_file="constraints.smt2")
