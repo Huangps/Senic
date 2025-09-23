@@ -2,7 +2,8 @@ import math
 import subprocess
 import os
 from typing import List, Dict, Tuple, Optional
-
+import itertools
+import time
 
 class OrientationRelationAnalyzer:
     """
@@ -149,7 +150,7 @@ class OrientationRelationAnalyzer:
 ; 定义变量
 (declare-const A_heading Real)
 (declare-const B_heading Real)
-(declare-const y Real) 
+(declare-const y Int) 
 
 ; 设置已知值
 (assert (= A_heading {A_heading}))
@@ -201,7 +202,7 @@ class OrientationRelationAnalyzer:
         filename = f"{B_point['id']}_toward_{A_point['id']}.smt2"
         file_path = self._write_smt_file(smt_code, filename)
 
-        success, result = self._run_smt_solver(file_path)
+        success, result, output = self._run_smt_solver(file_path)
         return success and result == "sat"
 
     def check_away_relation(self, A_point: Dict, B_point: Dict) -> bool:
@@ -217,7 +218,7 @@ class OrientationRelationAnalyzer:
         filename = f"{B_point['id']}_away_{A_point['id']}.smt2"
         file_path = self._write_smt_file(smt_code, filename)
 
-        success, result = self._run_smt_solver(file_path)
+        success, result, output = self._run_smt_solver(file_path)
         return success and result == "sat"
 
     def get_relative_heading_relation(self, A_point: Dict, B_point: Dict,
@@ -232,16 +233,16 @@ class OrientationRelationAnalyzer:
         filename = f"{B_point['id']}_facing_relative_to_{A_point['id']}.smt2"
         file_path = self._write_smt_file(smt_code, filename)
 
-        success, result = self._run_smt_solver(file_path)
+        success, result, output= self._run_smt_solver(file_path)
         if not success or "unsat" in result:
             return None
 
         # 解析 (get-value (y)) 的输出，例如: ((y 37.5))
         try:
-            if "(y" in result:
-                start = result.find("(y") + len("(y")
-                end = result.find(")", start)
-                value_str = result[start:end].strip()
+            if "(y" in output:
+                start = output.find("(y") + len("(y")
+                end = output.find(")", start)
+                value_str = output[start:end].strip()
                 y_value = float(value_str)
                 # 确保 y ∈ [0, 360)
                 y_value = y_value % 360.0
@@ -280,7 +281,7 @@ class OrientationRelationAnalyzer:
             f.write(smt_code)
         return file_path
 
-    def _run_smt_solver(self, file_path: str) -> tuple[bool, str]:
+    def _run_smt_solver(self, file_path: str) -> tuple[bool, str, str]:
         try:
             result = subprocess.run(
                 [self.dreal_path, file_path],
@@ -297,21 +298,21 @@ class OrientationRelationAnalyzer:
                     line = line.strip().lower()
                     if line in ["sat", "unsat"] or line.startswith("delta-sat"):
                         if line == "unsat":
-                            return (True, "unsat")
+                            return (True, "unsat","unsat")
                         else:
-                            return (True, "sat")
+                            return (True, "sat",output)
 
             # 错误处理
             error_output = result.stderr.strip()
             if error_output and "error" in error_output.lower() and "model is not available" not in error_output.lower():
                 print(f"dReal Error: {error_output}")
-                return (False, "error")
+                return (False, "error", "error")
 
-            return (False, "unknown")
+            return (False, "unknown", "unknown")
 
         except Exception as e:
             print(f"Solver Error: {e}")
-            return (False, "error")
+            return (False, "error", "error")
 
 
 
@@ -439,7 +440,7 @@ class SpatialRelationAnalyzer:
 ; 计算距离
 (define-fun distance () Real (sqrt (+ (* delta_x delta_x) (* delta_y delta_y))))
 
-; 计算B相对正Y轴的角度（弧度
+; 计算BA相对正Y轴的角度（弧度
 ; 坐标系中，正Y轴=0度，所以需要调整atan2的使用
 (define-fun angle_rad () Real 
     (let ((raw_angle (- (atan2 delta_y delta_x) (/ {math.pi} 2.0))))
@@ -600,7 +601,7 @@ class SpatialRelationAnalyzer:
 
 
 
-        print(f"DEBUG: {filename} -> success={success}, result={result}")  # 调试信息
+        #print(f"DEBUG: {filename} -> success={success}, result={result}")  # 调试信息
 
         # 只有成功执行且结果为sat时才返回True
         if success and result == "sat":
@@ -718,7 +719,7 @@ class PointSequenceAnalyzer:
                                                     (p["y"] - current_point["y"]) ** 2))
         return closest_point
 
-    def analyze_point_relations(self, current_point: Dict, reference_points: List[Dict],
+    def analyze_position_relations(self, current_point: Dict, reference_points: List[Dict],
                                 use_closest_only: bool = True) -> Optional[str]:
         """
         分析当前点与参考点的关系：
@@ -736,7 +737,7 @@ class PointSequenceAnalyzer:
         # 2. 检查最近点是否有 NSWE 关系
         relations, range_x = self.spatial_analyzer.get_NSWE_relations(closest_ref, current_point)
         if relations:
-            relation_str = "/".join(relations).upper()
+            relation_str = "/".join(relations)
             if relation_str == "behind":
                 return f"{current_point['id']} is {relation_str}  {closest_ref['id']} by Range[{range_x},{range_x}+5]"
             return f"{current_point['id']} is {relation_str} of {closest_ref['id']} by Range[{range_x},{range_x}+5]"
@@ -746,14 +747,14 @@ class PointSequenceAnalyzer:
         for ref in other_refs:
             relations, range_x = self.spatial_analyzer.get_NSWE_relations(ref, current_point)
             if relations:
-                relation_str = "/".join(relations).upper()
+                relation_str = "/".join(relations)
                 return f"{current_point['id']} is {relation_str} of {closest_ref['id']} by Range[{range_x},{range_x}+5]"
 
         # 4. 所有NSWE关系都无 → 用最近点计算数值关系
         xy = self.spatial_analyzer.get_numerical_relationship(closest_ref, current_point)
         if xy is not None:
             x, y = xy
-            return f"{current_point['id']} is at range x[{x}, {x + ' +2'}] y[{y:}, {y + ' +2'}] of {closest_ref['id']}"
+            return f"{current_point['id']} is at range[{x}, {x + ' +2'}]@range[{y:}, {y + ' +2'}] of {closest_ref['id']}"
 
         # 5. 彻底无关系
         return f"{current_point['id']} has no defined spatial relation with reference points"
@@ -837,7 +838,7 @@ class PointSequenceAnalyzer:
         """辅助方法：格式化朝向关系字符串"""
         if relation.startswith("relative_heading_"):
             angle = relation.split("_")[-1]
-            results.append(f"{current_point['id']} has relative heading {angle}° to {ref_point['id']}")
+            results.append(f"{current_point['id']} is facing range[{angle}，{angle}+10] deg relative to {ref_point['id']}")
         else:
             results.append(f"{current_point['id']} is facing {relation} {ref_point['id']}")
 
@@ -865,7 +866,7 @@ class PointSequenceAnalyzer:
             reference_points = points[:i]
 
             # 1. 分析空间关系
-            spatial_relation = self.analyze_point_relations(
+            spatial_relation = self.analyze_position_relations(
                 current_point, reference_points, use_closest_only
             )
             if spatial_relation:
@@ -891,9 +892,26 @@ class PointSequenceAnalyzer:
             print(f"{i}. {result}")
 
 
+def generate_all_permutations(original_points):
+    """
+    生成所有可能的排列组合，保持第一个点（'ego'）不变
 
+    Args:
+        original_points: 原始点列表，第一个点必须是 "ego"
 
+    Returns:
+        包含所有排列组合的列表，每个排列都是完整的点信息列表
+    """
+    if len(original_points) == 0 or original_points[0]["id"] != "ego":
+        raise ValueError("第一个点必须是 'ego'")
 
+    ego_point = original_points[0]
+    other_points = original_points[1:]
+
+    # 生成所有排列组合并转换为列表
+    return [[ego_point] + list(perm) for perm in itertools.permutations(other_points)]
+
+import shutil
 # 使用示例
 def main():
     """
@@ -901,35 +919,73 @@ def main():
     """
     # 定义点数据
     points1 = [
-        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 90.0},
-        {"id": "P1", "x": 5.0, "y": 0.0, "heading": 90.0},
-        {"id": "P2", "x": 10.0, "y": -2.0, "heading": 90.0},
-        {"id": "P3", "x": 8.0, "y": 3.0, "heading": 90.0},
-        {"id": "P4", "x": 15.0, "y": 0.0, "heading": 90.0}
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 315.0},
+        {"id": "P1", "x": 5.0, "y": 5, "heading": 135.0},
+        {"id": "P2", "x": 10.0, "y": 5, "heading": 90.0}
     ]
     points2 = [
-        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 90.0},
-        {"id": "P1", "x": 5.0, "y": 5.0, "heading": 135.0},
-        {"id": "P2", "x": 5.0, "y": 0.0, "heading": 0.0},
-        {"id": "P3", "x": 0.0, "y": 8.0, "heading": 90.0},
-        {"id": "P4", "x": -10, "y": 0.0, "heading": 90.0},
-        {"id": "P5", "x": -10, "y": 5, "heading": 90.0}
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 315.0},
+        {"id": "P2", "x": 10.0, "y": 5, "heading": 90.0},
+        {"id": "P1", "x": 5.0, "y": 5, "heading": 135.0},
+    ]
+    points3 = [
+        {"id": "ego", "x": 500.688, "y": 1701.168, "heading": 62.630},
+        {"id": "O1", "x": 487.82, "y": 1719.532, "heading": 61.950},
+        {"id": "O2", "x": 490.296, "y": 1706.641, "heading": 61.933},
+        {"id": "O3", "x": 480.038, "y": 1716.852, "heading": 242.308},
+        {"id": "O4", "x": 495.241, "y": 1697.111, "heading": 60.885},
+        {"id": "O5", "x": 455.881, "y": 1705.502, "heading": 326.857},
+        {"id": "O6", "x": 481.242, "y": 1705.848, "heading": 241.962},
+        {"id": "O7", "x": 481.082, "y": 1719.193, "heading": 241.308}
     ]
 
-    # 创建分析器
+    # all_permutations = generate_all_permutations(points3)
+    #
+    # _total_time =0
+    # for i in range(0, len(all_permutations)):
+    #     with open(f"./output/output{i}.txt", 'w') as f:
+    #
+    #
+    #         print(f"Progress: {i+1}")
+    #         f.write(f"i: {all_permutations[i]} \n")
+    #
+    #         start_time = time.time()
+    #
+    #         analyzer = PointSequenceAnalyzer(temp_dir="./temp_smt")
+    #         spatial_results = analyzer.analyze_sequence(all_permutations[i])
+    #
+    #         endtime = time.time()
+    #
+    #         _total_time += endtime-start_time
+    #
+    #         print("time:",_total_time)
+    #
+    #         for j, result in enumerate(spatial_results, 1):
+    #             f.write(f"{j}. {result} \n")
+    #
+    #
+    #
+    #         shutil.rmtree("./temp_smt")
+    # print(_total_time)
+
+
     analyzer = PointSequenceAnalyzer(temp_dir="./temp_smt")
 
+
+    spatial_results = analyzer.analyze_sequence(points1)
+    for i, result in enumerate(spatial_results, 1):
+        print(f"{i}. {result}")
 
     spatial_results = analyzer.analyze_sequence(points2)
     for i, result in enumerate(spatial_results, 1):
         print(f"{i}. {result}")
 
-
-
-
-    # 清理临时文件（可选）
-    # import shutil
-    # shutil.rmtree("./temp_smt")
+    # spatial_results = analyzer.analyze_sequence(points3)
+    # for i, result in enumerate(spatial_results, 1):
+    #     print(f"{i}. {result}")
+    #清理临时文件（可选）
+    import shutil
+    shutil.rmtree("./temp_smt")
 
 
 if __name__ == "__main__":
