@@ -919,9 +919,8 @@ def main():
     """
     # 定义点数据
     points1 = [
-        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 315.0},
-        {"id": "P1", "x": 5.0, "y": 5, "heading": 135.0},
-        {"id": "P2", "x": 10.0, "y": 5, "heading": 90.0}
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 5.0, "y": 5.0, "heading": 45.0}
     ]
     points2 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 315.0},
@@ -976,9 +975,9 @@ def main():
     for i, result in enumerate(spatial_results, 1):
         print(f"{i}. {result}")
 
-    spatial_results = analyzer.analyze_sequence(points2)
-    for i, result in enumerate(spatial_results, 1):
-        print(f"{i}. {result}")
+    # spatial_results = analyzer.analyze_sequence(points2)
+    # for i, result in enumerate(spatial_results, 1):
+    #     print(f"{i}. {result}")
 
     # spatial_results = analyzer.analyze_sequence(points3)
     # for i, result in enumerate(spatial_results, 1):

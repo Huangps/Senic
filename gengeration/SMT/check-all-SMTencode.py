@@ -1,308 +1,317 @@
 import math
-import subprocess
-import os
-from typing import List, Dict
+
+def generate_complete_smt_dreal(points, filename):
+    ego = points[0]
+    others = points[1:]
+    m = len(others)
+
+    with open(filename, "w") as f:
+        f.write("(set-logic QF_NRA)\n\n")
+
+        # --- 1. 声明 ego ---
+        f.write(f"(declare-const x0 Real) (assert (= x0 {ego['x']}))\n")
+        f.write(f"(declare-const y0 Real) (assert (= y0 {ego['y']}))\n")
+        f.write(f"(declare-const h0 Real) (assert (= h0 {ego['heading']}))\n\n")
+
+        # --- 2. 声明非ego点 ---
+        for i, pt in enumerate(others, 1):
+            f.write(f"(declare-const x{i} Real) (assert (= x{i} {pt['x']}))\n")
+            f.write(f"(declare-const y{i} Real) (assert (= y{i} {pt['y']}))\n")
+            f.write(f"(declare-const h{i} Real) (assert (= h{i} {pt['heading']}))\n\n")
 
 
-class CompleteSMT2Analyzer:
-    """
-    完整的SMT2关系分析器，使用数值编码代替字符串
-    """
+        # 声明所有相对角度变量
 
-    def __init__(self, temp_dir: str = "./temp_smt"):
-        self.temp_dir = temp_dir
-        os.makedirs(temp_dir, exist_ok=True)
-        self.dreal_path = "/opt/dreal/4.21.06.2/bin/dreal"
 
-        # 关系类型编码
-        self.RELATION_CODES = {
-            "none": 0,
-            "ahead": 1,
-            "behind": 2,
-            "left": 3,
-            "right": 4,
-            "toward": 5,
-            "away": 6
-        }
+        # --- 3. 布尔矩阵编码排列 ---
+        f.write("; ==== 布尔矩阵排列 ====\n")
+        for i in range(m):  # 位置 i
+            for j in range(m):  # 点 j
+                f.write(f"(declare-const b_{i}_{j} Bool)\n")
+        f.write("\n")
 
-        self.CODE_TO_RELATION = {v: k for k, v in self.RELATION_CODES.items()}
+        # 每个位置选一个点
+        for i in range(m):
+            ors = " ".join([f"b_{i}_{j}" for j in range(m)])
+            f.write(f"(assert (or {ors}))\n")
+        f.write("\n")
 
-    def generate_complete_smt2(self,points: List[Dict]) -> str:
-        smt_code = f"""(set-logic QF_NRA)
+        # 每个点只能出现一次
+        for j in range(m):
+            for i1 in range(m):
+                for i2 in range(i1+1, m):
+                    f.write(f"(assert (not (and b_{i1}_{j} b_{i2}_{j})))\n")
+        f.write("\n")
 
-    ; ==================== 辅助函数定义 ====================
-    (define-fun normalize_angle ((angle Real)) Real
-        (ite (> angle 360.0) (- angle 360.0)
-        (ite (< angle 0.0) (+ angle 360.0)
-        angle)))
-
-    (define-fun relative_angle_diff ((a Real) (b Real)) Real
-        (let ((diff_raw (- (normalize_angle a) (normalize_angle b))))
-            (normalize_angle diff_raw)))
-
-    (define-fun relative_bearing ((Ax Real) (Ay Real) (Bx Real) (By Real)) Real
-        (let ((dx (- Bx Ax))
-              (dy (- By Ay)))
-            (let ((angle_rad (atan2 dy dx)))
-                (let ((angle_deg_normal (* (- angle_rad (/ {math.pi} 2.0)) (/ 180.0 {math.pi}))))
-                    (normalize_angle angle_deg_normal)))))
-
-    ; 空间关系判断函数
-    (define-fun is_ahead ((ref_heading Real) (bearing Real)) Bool
-        (let ((diff (relative_angle_diff bearing ref_heading)))
-            (or (and (>= diff 0.0) (<= diff 10.0))
-                (and (>= diff 350.0) (<= diff 360.0)))))
-
-    (define-fun is_behind ((ref_heading Real) (bearing Real)) Bool
-        (let ((diff (relative_angle_diff bearing ref_heading)))
-            (and (>= diff 170.0) (<= diff 190.0))))
-
-    (define-fun is_left ((ref_heading Real) (bearing Real)) Bool
-        (let ((diff (relative_angle_diff bearing ref_heading)))
-            (and (>= diff 80.0) (<= diff 100.0))))
-
-    (define-fun is_right ((ref_heading Real) (bearing Real)) Bool
-        (let ((diff (relative_angle_diff bearing ref_heading)))
-            (and (>= diff 260.0) (<= diff 280.0))))
-
-    ; 朝向关系判断函数
-    (define-fun is_toward ((ref_x Real) (ref_y Real) (point_x Real) (point_y Real) (point_heading Real)) Bool
-        (let ((bearing (relative_bearing point_x point_y ref_x ref_y)))
-            (<= (relative_angle_diff bearing point_heading) 10.0)))
-
-    (define-fun is_away ((ref_x Real) (ref_y Real) (point_x Real) (point_y Real) (point_heading Real)) Bool
-        (let ((bearing (relative_bearing ref_x ref_y point_x point_y)))
-            (<= (relative_angle_diff bearing point_heading) 10.0)))
-
-    ; ==================== 变量声明 ====================
-    """
-
-        # 声明所有点的坐标和朝向变量
-        for point in points:
-            smt_code += f"(declare-const {point['id']}_x Real)\n"
-            smt_code += f"(declare-const {point['id']}_y Real)\n"
-            smt_code += f"(declare-const {point['id']}_heading Real)\n"
-
-        # 声明关系变量
-        for i in range(1, len(points)):
-            current_point = points[i]
-            for j in range(i):
-                ref_point = points[j]
-                smt_code += f"(declare-const spatial_{current_point['id']}_{ref_point['id']} Real)\n"
-                smt_code += f"(declare-const orient_{current_point['id']}_{ref_point['id']} Real)\n"
-
-        smt_code += "\n; ==================== 已知值约束 ====================\n"
-
-        # 设置所有点的已知值
-        for point in points:
-            smt_code += f"(assert (= {point['id']}_x {point['x']}))\n"
-            smt_code += f"(assert (= {point['id']}_y {point['y']}))\n"
-            smt_code += f"(assert (= {point['id']}_heading {point['heading']}))\n"
-
-        # 设置关系变量的范围约束
-        for i in range(1, len(points)):
-            current_point = points[i]
-            for j in range(i):
-                ref_point = points[j]
-                smt_code += f"(assert (>= spatial_{current_point['id']}_{ref_point['id']} 0.0))\n"
-                smt_code += f"(assert (<= spatial_{current_point['id']}_{ref_point['id']} 4.0))\n"
-                smt_code += f"(assert (>= orient_{current_point['id']}_{ref_point['id']} 0.0))\n"
-                smt_code += f"(assert (<= orient_{current_point['id']}_{ref_point['id']} 6.0))\n"
-
-        smt_code += "\n; ==================== 关系约束 ====================\n"
-
-        # 为每个点对添加关系约束
-        for i in range(1, len(points)):
-            current_point = points[i]
-            for j in range(i):
-                ref_point = points[j]
-
-                # 使用 define-fun 定义方位角（关键修复！）
-                bearing_var = f"bearing_{current_point['id']}_{ref_point['id']}"
-                smt_code += f"""
-    ; 计算 {current_point['id']} 相对于 {ref_point['id']} 的方位角
-    (define-fun {bearing_var} () Real
-        (relative_bearing {ref_point['id']}_x {ref_point['id']}_y {current_point['id']}_x {current_point['id']}_y))
-    """
-
-                # 空间关系约束
-                smt_code += f"""
-    ; {current_point['id']} 与 {ref_point['id']} 的空间关系
-    (assert (or
-        (and (is_ahead {ref_point['id']}_heading {bearing_var}) (= spatial_{current_point['id']}_{ref_point['id']} 0.0))
-        (and (is_ahead {ref_point['id']}_heading {bearing_var}) (= spatial_{current_point['id']}_{ref_point['id']} 1.0))
-        (and (is_behind {ref_point['id']}_heading {bearing_var}) (= spatial_{current_point['id']}_{ref_point['id']} 2.0))
-        (and (is_left {ref_point['id']}_heading {bearing_var}) (= spatial_{current_point['id']}_{ref_point['id']} 3.0))
-        (and (is_right {ref_point['id']}_heading {bearing_var}) (= spatial_{current_point['id']}_{ref_point['id']} 4.0))
-    ))
-    """
-
-                # 朝向关系约束
-                smt_code += f"""
-    ; {current_point['id']} 与 {ref_point['id']} 的朝向关系
-    (assert (or
-        (and (is_toward {ref_point['id']}_x {ref_point['id']}_y {current_point['id']}_x {current_point['id']}_y {current_point['id']}_heading)
-             (= orient_{current_point['id']}_{ref_point['id']} 5.0))
-        (and (is_away {ref_point['id']}_x {ref_point['id']}_y {current_point['id']}_x {current_point['id']}_y {current_point['id']}_heading)
-             (= orient_{current_point['id']}_{ref_point['id']} 6.0))
-        (= orient_{current_point['id']}_{ref_point['id']} 0.0)
-    ))
-    """
-
-        smt_code += "\n; ==================== 求解 ====================\n"
-        smt_code += "(check-sat)\n"
-        smt_code += "(get-value ("
-
-        # 添加所有需要获取值的变量
-        value_vars = []
-        for i in range(1, len(points)):
-            current_point = points[i]
-            for j in range(i):
-                ref_point = points[j]
-                value_vars.append(f"spatial_{current_point['id']}_{ref_point['id']}")
-                value_vars.append(f"orient_{current_point['id']}_{ref_point['id']}")
-
-        smt_code += " ".join(value_vars)
-        smt_code += "))\n"
-
-        return smt_code
+        # --- 4. 定义排列后的非ego点属性 ---
+        for i in range(m):
+            expr_x = "".join([f"(ite b_{i}_{j} x{j+1} " for j in range(m)]) + f"x{m}" + ")"*m
+            expr_y = "".join([f"(ite b_{i}_{j} y{j+1} " for j in range(m)]) + f"y{m}" + ")"*m
+            expr_h = "".join([f"(ite b_{i}_{j} h{j+1} " for j in range(m)]) + f"h{m}" + ")"*m
+            f.write(f"(define-fun vx{i} () Real {expr_x})\n")
+            f.write(f"(define-fun vy{i} () Real {expr_y})\n")
+            f.write(f"(define-fun vh{i} () Real {expr_h})\n\n")
 
 
 
 
-    def write_smt_file(self, smt_code: str, filename: str = "complete_relations.smt2") -> str:
-        """写入SMT2文件"""
-        file_path = os.path.join(self.temp_dir, filename)
-        with open(file_path, "w") as f:
-            f.write(smt_code)
-        return file_path
-
-    def run_smt_solver(self, file_path: str) -> tuple:
-        """运行SMT求解器"""
-        try:
-            result = subprocess.run(
-                [self.dreal_path, file_path],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-
-            output = result.stdout.strip()
-            error_output = result.stderr.strip()
-
-            if "sat" in output.lower():
-                return (True, "sat", output)
-            elif "unsat" in output.lower():
-                return (True, "unsat", output)
-            elif "delta-sat" in output.lower():
-                return (True, "delta-sat", output)
-
-            if error_output:
-                return (False, "error", error_output)
-
-            return (False, "unknown", output)
-
-        except subprocess.TimeoutExpired:
-            return (False, "timeout", "Solver timeout")
-        except Exception as e:
-            return (False, "exception", str(e))
-
-    def parse_model_output(self, output: str) -> Dict:
-        """解析求解器输出"""
-        results = {}
-        lines = output.split('\n')
-
-        for line in lines:
-            line = line.strip()
-            if line.startswith('((') and line.endswith('))'):
-                content = line[2:-2]
-                pairs = content.split(') (')
-                for pair in pairs:
-                    pair = pair.replace('(', '').replace(')', '').strip()
-                    parts = pair.split()
-                    if len(parts) >= 2:
-                        var_name = parts[0]
-                        try:
-                            value = float(parts[1])
-                            results[var_name] = value
-                        except ValueError:
-                            results[var_name] = 0.0
-
-        return results
-
-    def analyze_relations(self, points: List[Dict]) -> List[str]:
-        """分析所有点之间的关系"""
-        # 生成完整的SMT2代码
-        smt_code = self.generate_complete_smt2(points)
-
-        # 写入文件
-        file_path = self.write_smt_file(smt_code)
-        print("SMT2文件已生成:", file_path)
-
-        # 运行求解器
-        success, result, output = self.run_smt_solver(file_path)
-
-        print("求解器结果:", result)
-
-        if not success or ("sat" not in result and "delta-sat" not in result):
-            return ["分析失败: {}".format(result)]
-
-        # 解析结果
-        parsed_results = self.parse_model_output(output)
-
-        # 格式化输出
-        formatted_results = []
-        for i in range(1, len(points)):
-            current_point = points[i]
-            found = False
-
-            for j in range(i):
-                ref_point = points[j]
-                spatial_key = "spatial_{}_{}".format(current_point['id'], ref_point['id'])
-                orient_key = "orient_{}_{}".format(current_point['id'], ref_point['id'])
-
-                if spatial_key in parsed_results:
-                    spatial_code = int(round(parsed_results[spatial_key]))
-                    orient_code = int(round(parsed_results.get(orient_key, 0)))
-
-                    spatial_rel = self.CODE_TO_RELATION.get(spatial_code, "unknown")
-                    orient_rel = self.CODE_TO_RELATION.get(orient_code, "none")
-
-                    if orient_rel != "none":
-                        formatted_results.append("{} 在 {} 的{}方向，朝向{}".format(
-                            current_point['id'], ref_point['id'], spatial_rel, orient_rel
-                        ))
-                    else:
-                        formatted_results.append("{} 在 {} 的{}方向".format(
-                            current_point['id'], ref_point['id'], spatial_rel
-                        ))
-                    found = True
-                    break
-
-            if not found:
-                formatted_results.append("{} 与参考点无明确空间关系".format(current_point['id']))
-
-        return formatted_results
-
-    def print_results(self, results: List[str]):
-        """打印分析结果"""
-        print("=== 空间关系分析结果 ===")
-        for i, result in enumerate(results, 1):
-            print("{}. {}".format(i, result))
+        # --- 5. 生成位置关系约束 (前、后、左、右、局部) ---
+        f.write("; ==== 位置关系约束 ====\n")
+        pos_constraints = []
+        for i in range(m):
+            ors = []
+            for j in range(i+1):
+                if j == 0:
+                    A_x, A_y, A_h = "x0", "y0", "h0"
+                    ref_name = "ego"
+                else:
+                    A_x, A_y, A_h = f"vx{j-1}", f"vy{j-1}", f"vh{j-1}"
+                    ref_name = f"v{j - 1}"
+                B_x, B_y = f"vx{i}", f"vy{i}"
+                # 直接展开公式，不用 let
+                rel_or_list = []
+                for rel_type in ['ahead','behind','left','right']:
+                    if rel_type == 'ahead':
+                        min_angle, max_angle = -10, 10
+                    elif rel_type == 'behind':
+                        min_angle, max_angle = 170, 190
+                    elif rel_type == 'left':
+                        min_angle, max_angle = 80, 100
+                    elif rel_type == 'right':
+                        min_angle, max_angle = 260, 280
+                    angle_expr = f"(let ((angle_deg (* (- (atan2 (- {B_y} {A_y}) (- {B_x} {A_x})) (/ {math.pi} 2.0)) (/ 180.0 {math.pi}))))" \
+                                 f"(let ((norm_angle (ite (>= angle_deg 360.0) (- angle_deg 360.0) (ite (< angle_deg 0.0) (+ angle_deg 360.0) angle_deg))))" \
+                                 f"(let ((theta_min (+ {A_h} {min_angle})))" \
+                                 f"(let ((theta_max (+ {A_h} {max_angle})))" \
+                                 f"(ite (<= theta_min theta_max) (and (>= norm_angle theta_min) (<= norm_angle theta_max))" \
+                                 f"(or (>= norm_angle theta_min) (<= norm_angle theta_max)))))))"
+                    rel_or_list.append(angle_expr)
+                # 局部坐标系 [x,x+5]@[y,y+5]
 
 
-# 测试
-def main():
-    points = [
-        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
-        {"id": "P1", "x": 0.0, "y": 5.0, "heading": 0.0},
-        {"id": "P2", "x": 10.0, "y": 5.0, "heading": 90.0}
-    ]
+                f.write(f"(declare-const local_x_v{i}_{ref_name} Real)\n")
+                f.write(f"(assert (and (>= local_x_v{i}_{ref_name} -100.0) (<= local_x_v{i}_{ref_name} 100.0)))\n")
+                f.write(f"(declare-const local_y_v{i}_{ref_name} Real)\n")
+                f.write(f"(assert (and (>= local_y_v{i}_{ref_name} -100.0) (<= local_y_v{i}_{ref_name} 100.0)))\n")
 
-    analyzer = CompleteSMT2Analyzer()
-    results = analyzer.analyze_relations(points)
-    analyzer.print_results(results)
+                local_expr = (
+                    f"(let ((delta_x_global (- {B_x} {A_x}))"
+                    f"      (delta_y_global (- {B_y} {A_y})))"
+                    f"  (let ((heading_rad (* {A_h} (/ {math.pi} 180.0))))"
+                    f"    (let ((local_x (+ (* (- (sin heading_rad)) delta_y_global) "
+                    f"(* (cos heading_rad) delta_x_global)))"
+                    f"          (local_y (+ (* (sin heading_rad) delta_x_global) "
+                    f"(* (cos heading_rad) delta_y_global))))"
+                    f"      (and (>= local_x local_x_v{i}_{ref_name}) (<= local_x (+ local_x_v{i}_{ref_name} 0.1))"
+                    f"           (>= local_y local_y_v{i}_{ref_name}) (<= local_y (+ local_y_v{i}_{ref_name} 0.1))))))"
+                )
+
+                rel_or_list.append(local_expr)
+                ors.append("(or " + " ".join(rel_or_list) + ")")
+            pos_constraints.append("(or " + " ".join(ors) + ")")
+        f.write("(assert (and\n" + "\n".join(pos_constraints) + "\n))\n\n")
+
+        # --- 6. 生成朝向关系约束 (朝向、背向、相对角度) ---
+        f.write("; ==== 朝向关系约束 ====\n")
+        # ==== 朝向关系约束 ====
+        head_constraints = []
+        for i in range(m):
+            ors = []
+            for j in range(i + 1):
+                if j == 0:
+                    A_x, A_y, A_h = "x0", "y0", "h0"
+                    ref_name = "ego"  # ego 点
+                else:
+                    A_x, A_y, A_h = f"vx{j - 1}", f"vy{j - 1}", f"vh{j - 1}"
+                    ref_name = f"v{j - 1}"  # 非 ego 的第 j-1 个点
+
+                B_x, B_y, B_h = f"vx{i}", f"vy{i}", f"vh{i}"
+
+                f.write(f"(declare-const relative_angle_v{i}_{ref_name} Real)\n")
+                f.write(f"(assert (and (>= relative_angle_v{i}_{ref_name} 0.0) (<= relative_angle_v{i}_{ref_name} 360.0)))\n")
+
+                # toward
+                toward_expr = (
+                    f"(let ((delta_x (- {A_x} {B_x})))"
+                    f"  (let ((delta_y (- {A_y} {B_y})))"
+                    f"    (let ((angle_rad (atan2 delta_y delta_x)))"
+                    f"      (let ((bearing_deg (* (- angle_rad (/ {math.pi} 2.0)) (/ 180.0 {math.pi}))))"
+                    f"        (let ((norm_bearing (ite (>= bearing_deg 360.0) (- bearing_deg 360.0) "
+                    f"(ite (< bearing_deg 0.0) (+ bearing_deg 360.0) bearing_deg))))"
+                    f"          (let ((angle_diff (- norm_bearing {B_h})))"
+                    f"            (let ((min_angle_diff (ite (> angle_diff 180.0) (- 360.0 angle_diff) angle_diff)))"
+                    f"              (<= min_angle_diff 10.0) )))))))"
+                )
+
+
+                # away
+                away_expr = (
+                    f"(let ((delta_x (- {B_x} {A_x})))"
+                    f"  (let ((delta_y (- {B_y} {A_y})))"
+                    f"    (let ((angle_rad (atan2 delta_y delta_x)))"
+                    f"      (let ((bearing_deg (* (- angle_rad (/ {math.pi} 2.0)) (/ 180.0 {math.pi}))))"
+                    f"        (let ((norm_bearing (ite (>= bearing_deg 360.0) (- bearing_deg 360.0) "
+                    f"(ite (< bearing_deg 0.0) (+ bearing_deg 360.0) bearing_deg))))"
+                    f"          (let ((angle_diff (- norm_bearing {B_h})))"
+                    f"            (let ((min_angle_diff (ite (> angle_diff 180.0) (- 360.0 angle_diff) angle_diff)))"
+                    f"              (<= min_angle_diff 10.0) )))))))"
+                )
+
+                relative_expr = (
+                    f"(let ((rel_heading (- {B_h} {A_h})))"
+                    f"  (let ((norm_rel (ite (>= rel_heading 360.0) (- rel_heading 360.0) "
+                    f"(ite (< rel_heading 0.0) (+ rel_heading 360.0) rel_heading))))"
+                    f"    (and (>= norm_rel (- relative_angle_v{i}_{ref_name} 5)) "
+                    f"(<= norm_rel (+ relative_angle_v{i}_{ref_name} 5)) " # 角度差是正负5
+                    f"(>= relative_angle_v{i}_{ref_name} 0) "
+                    f"(< relative_angle_v{i}_{ref_name} 360))))"
+                )
+
+
+                ors.append(f"(or {toward_expr} {away_expr} {relative_expr})")
+
+            head_constraints.append("(or " + " ".join(ors) + ")")
+
+        f.write("(assert (and\n" + "\n".join(head_constraints) + "\n))\n\n")
+
+        # --- 7. 检查可满足性 ---
+        f.write("(check-sat)\n(get-model)\n")
 
 
 if __name__ == "__main__":
-    main()
+
+    ##2s  two-points-test_2_1
+    points_2_1 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 180.0},
+        {"id": "P1", "x": 5.0, "y": 5.0, "heading": 0.0}
+    ]
+
+    #generate_complete_smt_dreal(points_2_1, "two-points-test_2_1.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_1.smt2")
+
+    ##2s  two-points-test_2_2
+    points_2_2 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 180.0},
+        {"id": "P1", "x": 5.0, "y": 5.1, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_2, "two-points-test_2_2.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_2.smt2")
+
+
+    ## long time(22min)   two-points-test_2_3
+    points_2_3 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 180.0},
+        {"id": "P1", "x": 0.0, "y": 1.41, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_3, "two-points-test_2_3.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_3.smt2")
+
+    ## long time   two-points-test_2_4  只求解位置关系大约9s    只求解朝向关系0.1s以内
+    points_2_4 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 180.0},
+        {"id": "P1", "x": 0.0, "y": 1.4, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_4, "two-points-test_2_4.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_4.smt2")
+
+    ## 2s   two-points-test_2_5
+    points_2_5 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 2.0, "y": 3.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_5, "two-points-test_2_5.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_5.smt2")
+
+    ## 2s   atan2(4,1)约为75度
+    points_2_6 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 1.0, "y": 4.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_6, "two-points-test_2_6.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_6.smt2")
+
+    #  2s  atan2(6,1)约为80.5度
+    points_2_8 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 1.0, "y": 6.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_8, "two-points-test_2_8.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_8.smt2")
+
+
+    #  2s  atan2(1000,1)约为89.94度
+    points_2_12 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 1.0, "y": 1000.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_12, "two-points-test_2_12.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_12.smt2")
+
+    # 2s
+    points_2_13 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 0.01, "y": 100000.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_13, "two-points-test_2_13.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_13.smt2")
+
+
+    #33min
+    points_2_14 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 0.0, "y": 5.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_14, "two-points-test_2_14.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_14.smt2")
+
+
+    #1.5s
+    points_2_15 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 0.0, "y": -5.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_15, "two-points-test_2_15.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_15.smt2")
+
+    # 1.3s
+    points_2_16 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 5.0, "y": 0.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_16, "two-points-test_2_16.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_16.smt2")
+
+    # 1.3s
+    points_2_17 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": -5.0, "y": 0.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_17, "two-points-test_2_17.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_17.smt2")
+
+    # 5s
+    points_2_18 = [
+        {"id": "ego", "x": 1.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 0.0, "y": 5.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_18, "two-points-test_2_18.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_18.smt2")
+
+
+    ##    three-points-test_3_1.smt2
+    points_3_1 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 180.0},
+        {"id": "P1", "x": 5.0, "y": 5.0, "heading": 0.0},
+        {"id": "P2", "x": 15.0, "y": 5.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_3_1, "three-points-test_3_1.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test_3_1.smt2")
+
+    ##    three-points-test_3_2.smt2
+    points_3_2= [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 1.0, "y": 1.0, "heading": 0.0},
+        {"id": "P2", "x": -1.0, "y": 1.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_3_2, "three-points-test_3_2.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test_3_2.smt2")
