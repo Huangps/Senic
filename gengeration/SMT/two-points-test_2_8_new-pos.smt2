@@ -1,12 +1,12 @@
 (set-logic QF_NRA)
 
-(declare-const x0 Real) (assert (= x0 0.0))
+(declare-const x0 Real) (assert (= x0 1.0))
 (declare-const y0 Real) (assert (= y0 0.0))
 (declare-const h0 Real) (assert (= h0 0.0))
 
-(declare-const x1 Real) (assert (= x1 -5.0))
-(declare-const y1 Real) (assert (= y1 0.0))
-(declare-const h1 Real) (assert (= h1 270.0))
+(declare-const x1 Real) (assert (= x1 1.0))
+(declare-const y1 Real) (assert (= y1 5.0))
+(declare-const h1 Real) (assert (= h1 0.0))
 
 ; ==== 布尔矩阵排列 ====
 (declare-const b_0_0 Bool)
