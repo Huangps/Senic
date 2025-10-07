@@ -310,7 +310,7 @@ if __name__ == "__main__":
     #generate_complete_smt_dreal(points_2_5, "two-points-test_2_5_new.smt2")
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_5_new.smt2")
 
-    #
+    # 54s
     points_2_6 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": 1.0, "y": 5.0, "heading": 0.0}
@@ -318,21 +318,6 @@ if __name__ == "__main__":
 
     #generate_complete_smt_dreal(points_2_6, "two-points-test_2_6_new.smt2")
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_6_new.smt2")
-
-    #
-    points_2_7 = [
-        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
-        {"id": "P1", "x": 0.0, "y": 5.0, "heading": 0.0}
-    ]
-
-
-    points_2_8 = [
-        {"id": "ego", "x": 1.0, "y": 0.0, "heading": 0.0},
-        {"id": "P1", "x": 1.0, "y": 5.0, "heading": 0.0}
-    ]
-    #generate_complete_smt_dreal(points_2_8, "two-points-test_2_8_new.smt2")
-    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_8_new.smt2")
-
 
 
     ##
@@ -360,8 +345,8 @@ if __name__ == "__main__":
         {"id": "O1", "x": -5.0, "y": 0.0, "heading": 0.0},
         {"id": "O2", "x": -10.0, "y":0.0, "heading": 0.0}
     ]
-    generate_complete_smt_dreal(points_3_3, "three-points-test3.smt2")
-    print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test3.smt2")
+    #generate_complete_smt_dreal(points_3_3, "three-points-test3.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test3.smt2")
 
 
 
