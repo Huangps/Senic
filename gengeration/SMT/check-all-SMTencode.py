@@ -262,7 +262,7 @@ def generate_complete_smt_dreal(points, filename):
 
 if __name__ == "__main__":
 
-    ## 138min two-points-test_2_1_new
+    ##   two-points-test_2_1_new
     points_2_1 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 315.0},
         {"id": "P1", "x": 5.0, "y": 5.0, "heading": 0.0}
@@ -296,8 +296,8 @@ if __name__ == "__main__":
         {"id": "P1", "x": -5.0, "y": 0.0, "heading": 270.0}
     ]
 
-    generate_complete_smt_dreal(points_2_4, "two-points-test_2_4_new.smt2")
-    print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_4_new.smt2")
+    #generate_complete_smt_dreal(points_2_4, "two-points-test_2_4_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_4_new.smt2")
 
 
 
@@ -335,17 +335,33 @@ if __name__ == "__main__":
 
 
 
-    #
-    points_4_1 = [
-        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
-        {"id": "P1", "x": -5.0, "y": 0.0, "heading": 270.0},
-        {"id": "P2", "x": -5.0, "y": 0.0, "heading": 270.0},
-        {"id": "P3", "x": -5.0, "y": 0.0, "heading": 270.0}
+    ##
+    points_3_1= [
+        {"id": "ego", "x": 500.688, "y": 1701.168, "heading": 62.630},
+        {"id": "O1", "x": 487.82, "y": 1719.532, "heading": 61.950},
+        {"id": "O2", "x": 490.296, "y": 1706.641, "heading": 61.933}
     ]
+    #generate_complete_smt_dreal(points_3_1, "three-points-test1.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test1.smt2")
 
-    #generate_complete_smt_dreal(points_4_1, "three-points-test_4_1.smt2")
-   # print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test_3_1_new.smt2")
+    ##
+    points_3_2= [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "O1", "x": 5.0, "y": 5.0, "heading": 0.0},
+        {"id": "O2", "x": -5.0, "y": 5.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_3_2, "three-points-test2.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test1.smt2")
 
+
+    ##
+    points_3_3= [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "O1", "x": -5.0, "y": 0.0, "heading": 0.0},
+        {"id": "O2", "x": -10.0, "y":0.0, "heading": 0.0}
+    ]
+    generate_complete_smt_dreal(points_3_3, "three-points-test3.smt2")
+    print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test3.smt2")
 
 
 

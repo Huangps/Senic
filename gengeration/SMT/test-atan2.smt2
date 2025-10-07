@@ -1,22 +1,16 @@
-(set-logic QF_NRA)
 
+(declare-const angle1 Real)
+(assert (= angle1 (atan2 0.1 100)))
 
+(declare-const angle2 Real)
+(assert (= angle2 (atan2 0.1 -100)))
 
-(define-fun A ((y1 Real) (y2 Real) (x1 Real) (x2 Real)) Real
-    (atan2 (- y1 y2) (- x1 x2) ))
+(declare-const angle3 Real)
+(assert (= angle3 (atan2 -100 0.1)))
 
-(define-fun A_result () Real (A 5.0 0.0 0.0 0.0))
-
-
-
-(define-fun B ((y1 Real) (y2 Real) (x1 Real) (x2 Real)) Real
-    (let ((B_1 (atan2 (- y1 y2) (- x1 x2))))
-        (- B_1 0 )))
-
-
-(define-fun B_result () Real (B 5.0 0.0 0.0 0.0))
-
+(declare-const angle4 Real)
+(assert (= angle4 (atan2 -0.1 100)))
 
 
 (check-sat)
-(get-model)
+(get-value (angle1 angle2 angle3 angle4))
