@@ -14,6 +14,9 @@
 (assert (or b_0_0))
 
 
+
+(assert (or b_0_0))
+
 (define-fun vx0 () Real (ite b_0_0 x1 x1))
 (define-fun vy0 () Real (ite b_0_0 y1 y1))
 (define-fun vh0 () Real (ite b_0_0 h1 h1))

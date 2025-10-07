@@ -22,7 +22,6 @@ def generate_complete_smt_dreal(points, filename):
 
         # 声明所有相对角度变量
 
-
         # --- 3. 布尔矩阵编码排列 ---
         f.write("; ==== 布尔矩阵排列 ====\n")
         for i in range(m):  # 位置 i
@@ -30,17 +29,30 @@ def generate_complete_smt_dreal(points, filename):
                 f.write(f"(declare-const b_{i}_{j} Bool)\n")
         f.write("\n")
 
-        # 每个位置选一个点
+        # 每个位置至少选一个点（行约束）
         for i in range(m):
             ors = " ".join([f"b_{i}_{j}" for j in range(m)])
             f.write(f"(assert (or {ors}))\n")
         f.write("\n")
 
-        # 每个点只能出现一次
+        # 每个位置最多选一个点（行约束）
+        for i in range(m):
+            for j1 in range(m):
+                for j2 in range(j1 + 1, m):
+                    f.write(f"(assert (not (and b_{i}_{j1} b_{i}_{j2})))\n")
+        f.write("\n")
+
+        # 每个点最多出现在一个位置（列约束）
         for j in range(m):
             for i1 in range(m):
-                for i2 in range(i1+1, m):
+                for i2 in range(i1 + 1, m):
                     f.write(f"(assert (not (and b_{i1}_{j} b_{i2}_{j})))\n")
+        f.write("\n")
+
+        # 每个点至少出现在一个位置（列约束）
+        for j in range(m):
+            ors = " ".join([f"b_{i}_{j}" for i in range(m)])
+            f.write(f"(assert (or {ors}))\n")
         f.write("\n")
 
         # --- 4. 定义排列后的非ego点属性 ---
@@ -86,12 +98,22 @@ def generate_complete_smt_dreal(points, filename):
                         min_angle, max_angle = 80, 100
                     elif rel_type == 'right':
                         min_angle, max_angle = 260, 280
+                    # angle_expr = f"(let ((angle_deg (* (- (atan2 (- {B_y} {A_y}) (- {B_x} {A_x})) (/ {math.pi} 2.0)) (/ 180.0 {math.pi}))))" \
+                    #              f"(let ((norm_angle (ite (>= angle_deg 360.0) (- angle_deg 360.0) (ite (< angle_deg 0.0) (+ angle_deg 360.0) angle_deg))))" \
+                    #              f"(let ((theta_min (+ {A_h} {min_angle})))" \
+                    #              f"(let ((theta_max (+ {A_h} {max_angle})))" \
+                    #              f"(ite (<= theta_min theta_max) (and (>= norm_angle theta_min) (<= norm_angle theta_max))" \
+                    #              f"(or (>= norm_angle theta_min) (<= norm_angle theta_max)))))))"
+
                     angle_expr = f"(let ((angle_deg (* (- (atan2 (- {B_y} {A_y}) (- {B_x} {A_x})) (/ {math.pi} 2.0)) (/ 180.0 {math.pi}))))" \
                                  f"(let ((norm_angle (ite (>= angle_deg 360.0) (- angle_deg 360.0) (ite (< angle_deg 0.0) (+ angle_deg 360.0) angle_deg))))" \
-                                 f"(let ((theta_min (+ {A_h} {min_angle})))" \
-                                 f"(let ((theta_max (+ {A_h} {max_angle})))" \
-                                 f"(ite (<= theta_min theta_max) (and (>= norm_angle theta_min) (<= norm_angle theta_max))" \
+                                 f"(let ((theta_min (let ((raw (+ {A_h} {min_angle}))) (ite (>= raw 360.0) (- raw 360.0) (ite (< raw 0.0) (+ raw 360.0) raw)))))" \
+                                 f"(let ((theta_max (let ((raw (+ {A_h} {max_angle}))) (ite (>= raw 360.0) (- raw 360.0) (ite (< raw 0.0) (+ raw 360.0) raw)))))" \
+                                 f"(ite (<= theta_min theta_max)" \
+                                 f"(and (>= norm_angle theta_min) (<= norm_angle theta_max))" \
                                  f"(or (>= norm_angle theta_min) (<= norm_angle theta_max)))))))"
+
+
 
                     angle_exprs[rel_type] = angle_expr
                     rel_or_list.append(angle_expr)
@@ -139,7 +161,7 @@ def generate_complete_smt_dreal(points, filename):
 
 
             pos_constraints.append("(or " + " ".join(ors) + ")")
-        f.write("(assert (and\n" + "\n".join(pos_constraints) + "\n))\n\n")
+        f.write("(assert ( and \n" + "\n".join(pos_constraints) + "\n))\n\n")
 
 
         # --- 6. 生成朝向关系约束 (朝向、背向、相对角度) ---
@@ -249,7 +271,7 @@ if __name__ == "__main__":
     #generate_complete_smt_dreal(points_2_1, "two-points-test_2_1_new.smt2")
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_1_new.smt2")
 
-    #  去掉朝向约束后（two-points-test_2_2_new-copy）求解约30s     完整约束304m two-points-test_2_2_new
+    #  6s
     points_2_2 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": 5.0, "y": 0.0, "heading": 0.0}
@@ -259,7 +281,7 @@ if __name__ == "__main__":
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_2_new.smt2")
 
 
-    #  去掉朝向约束后（two-points-test_2_3_new-copy）求解约50s   /  去掉位置约束后（two-points-test_2_3_new-copy2）求解约0.1s
+    #  3s
     points_2_3 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": -5.0, "y": 0.0, "heading": 0.0}
@@ -268,14 +290,14 @@ if __name__ == "__main__":
     #generate_complete_smt_dreal(points_2_3, "two-points-test_2_3_new.smt2")
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_3_new.smt2")
 
-    # 去掉朝向约束后（two-points-test_2_4_new-copy-pos）求解约48s   /  去掉位置约束后（two-points-test_2_4_new-copy-head）求解约0.2s
+    # 48
     points_2_4 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": -5.0, "y": 0.0, "heading": 270.0}
     ]
 
-    #generate_complete_smt_dreal(points_2_4, "two-points-test_2_4_new.smt2")
-    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_4_new.smt2")
+    generate_complete_smt_dreal(points_2_4, "two-points-test_2_4_new.smt2")
+    print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_4_new.smt2")
 
 
 
@@ -308,20 +330,20 @@ if __name__ == "__main__":
         {"id": "ego", "x": 1.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": 1.0, "y": 5.0, "heading": 0.0}
     ]
-    generate_complete_smt_dreal(points_2_8, "two-points-test_2_8_new.smt2")
-    print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_8_new.smt2")
+    #generate_complete_smt_dreal(points_2_8, "two-points-test_2_8_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_8_new.smt2")
 
 
 
     #
-    points_3_1 = [
+    points_4_1 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": -5.0, "y": 0.0, "heading": 270.0},
         {"id": "P2", "x": -5.0, "y": 0.0, "heading": 270.0},
         {"id": "P3", "x": -5.0, "y": 0.0, "heading": 270.0}
     ]
 
-    #generate_complete_smt_dreal(points_3_1, "three-points-test_3_1_new.smt2")
+    #generate_complete_smt_dreal(points_4_1, "three-points-test_4_1.smt2")
    # print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test_3_1_new.smt2")
 
 
