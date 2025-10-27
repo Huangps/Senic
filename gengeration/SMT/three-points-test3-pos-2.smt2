@@ -90,6 +90,7 @@
 (ite (and (let ((angle_deg (* (- (atan2 (- vy1 vy0) (- vx1 vx0)) (/ 3.141592653589793 2.0)) (/ 180.0 3.141592653589793))))(let ((norm_angle (ite (>= angle_deg 360.0) (- angle_deg 360.0) (ite (< angle_deg 0.0) (+ angle_deg 360.0) angle_deg))))(let ((theta_min (let ((raw (+ vh0 260))) (ite (>= raw 360.0) (- raw 360.0) (ite (< raw 0.0) (+ raw 360.0) raw)))))(let ((theta_max (let ((raw (+ vh0 280))) (ite (>= raw 360.0) (- raw 360.0) (ite (< raw 0.0) (+ raw 360.0) raw)))))(ite (<= theta_min theta_max)(and (>= norm_angle theta_min) (<= norm_angle theta_max))(or (>= norm_angle theta_min) (<= norm_angle theta_max))))))) (>= dist_v1_v0 dist_low_v1_v0) (<= dist_v1_v0 dist_high_v1_v0)) 4  5
  ))))) (=> (= relation_v1_v0 5) (let ((delta_x_global (- vx1 vx0))      (delta_y_global (- vy1 vy0)))  (let ((heading_rad (* vh0 (/ 3.141592653589793 180.0))))    (let ((local_x (+ (* (- (sin heading_rad)) delta_y_global) (* (cos heading_rad) delta_x_global)))          (local_y (+ (* (sin heading_rad) delta_x_global) (* (cos heading_rad) delta_y_global))))      (and (>= local_x local_x_v1_v0) (<= local_x (+ local_x_v1_v0 5))           (>= local_y local_y_v1_v0) (<= local_y (+ local_y_v1_v0 5)))))))
 )
+
  )
 
 ))
