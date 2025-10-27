@@ -86,6 +86,21 @@ def generate_complete_smt_dreal(points, filename):
                     ref_name = f"v{j - 1}"
                 B_x, B_y = f"vx{i}", f"vy{i}"
 
+                #声明距离（常量） 和  距离区间上下界（变量）
+                dist_var = f"dist_v{i}_{ref_name}"
+                dist_low = f"dist_low_v{i}_{ref_name}"
+                dist_high = f"dist_high_v{i}_{ref_name}"
+                # 声明
+                f.write(f"(declare-const {dist_var} Real)\n")
+                f.write(f"(declare-const {dist_low} Real)\n")
+                f.write(f"(declare-const {dist_high} Real)\n")
+
+                f.write(
+                    f"(assert (= {dist_var} (sqrt (+ (* (- {B_x} {A_x}) (- {B_x} {A_x})) "
+                    f"(* (- {B_y} {A_y}) (- {B_y} {A_y}))))))\n"
+                )
+
+                f.write(f"(assert (= {dist_high} (+ {dist_low} 5)))\n")
 
                 rel_or_list = []
                 angle_exprs = {}
@@ -113,10 +128,10 @@ def generate_complete_smt_dreal(points, filename):
                                  f"(and (>= norm_angle theta_min) (<= norm_angle theta_max))" \
                                  f"(or (>= norm_angle theta_min) (<= norm_angle theta_max)))))))"
 
-
-
                     angle_exprs[rel_type] = angle_expr
                     rel_or_list.append(angle_expr)
+
+
                 # 局部坐标系 [x,x+5]@[y,y+5]
 
 
@@ -133,35 +148,26 @@ def generate_complete_smt_dreal(points, filename):
                     f"(* (cos heading_rad) delta_x_global)))"
                     f"          (local_y (+ (* (sin heading_rad) delta_x_global) "
                     f"(* (cos heading_rad) delta_y_global))))"
-                    f"      (and (>= local_x local_x_v{i}_{ref_name}) (<= local_x (+ local_x_v{i}_{ref_name} 0.1))"
-                    f"           (>= local_y local_y_v{i}_{ref_name}) (<= local_y (+ local_y_v{i}_{ref_name} 0.1))))))"
+                    f"      (and (>= local_x local_x_v{i}_{ref_name}) (<= local_x (+ local_x_v{i}_{ref_name} 5))"
+                    f"           (>= local_y local_y_v{i}_{ref_name}) (<= local_y (+ local_y_v{i}_{ref_name} 5))))))"
                 )
-
                 # --- 声明 relation 整数变量 1: ahead 2:behind 3:left 4:right 5:local-x-y ---
                 f.write(f"(declare-const relation_v{i}_{ref_name} Int)\n")
 
-                # --- 4. ite 优先级约束 ---
-                f.write(
-                    f"(assert (ite (or {angle_exprs['ahead']} {angle_exprs['behind']} "
-                    f"{angle_exprs['left']} {angle_exprs['right']}) "
-                    f"(or (= relation_v{i}_{ref_name} 1) (= relation_v{i}_{ref_name} 2) "
-                    f"(= relation_v{i}_{ref_name} 3) (= relation_v{i}_{ref_name} 4)) "
-                    f"(= relation_v{i}_{ref_name} 5)))\n"
+                ors.append(
+                    f"(and (= pos_choice_{i} {j}) "
+                    f"(= relation_v{i}_{ref_name} "
+                    f"(ite (and {angle_exprs['ahead']} (>= {dist_var} {dist_low}) (<= {dist_var} {dist_high})) 1 \n"
+                    f"(ite (and {angle_exprs['behind']} (>= {dist_var} {dist_low}) (<= {dist_var} {dist_high})) 2 \n"
+                    f"(ite (and {angle_exprs['left']} (>= {dist_var} {dist_low}) (<= {dist_var} {dist_high})) 3 \n"
+                    f"(ite (and {angle_exprs['right']} (>= {dist_var} {dist_low}) (<= {dist_var} {dist_high})) 4  5 \n ))))) "
+                    f"(=> (= relation_v{i}_{ref_name} 5) {local_expr})\n) \n "
                 )
 
-                # ---  蕴含约束 ---
-                f.write(f"(assert (=> (= relation_v{i}_{ref_name} 1) {angle_exprs['ahead']}))\n")
-                f.write(f"(assert (=> (= relation_v{i}_{ref_name} 2) {angle_exprs['behind']}))\n")
-                f.write(f"(assert (=> (= relation_v{i}_{ref_name} 3) {angle_exprs['left']}))\n")
-                f.write(f"(assert (=> (= relation_v{i}_{ref_name} 4) {angle_exprs['right']}))\n")
-                f.write(f"(assert (=> (= relation_v{i}_{ref_name} 5) {local_expr}))\n")
 
-                # ---   ---
-                ors.append(f"(and (= pos_choice_{i} {j}) (= relation_v{i}_{ref_name} relation_v{i}_{ref_name}))")
+            pos_constraints.append(" \n(or " + " ".join(ors) + ")\n")
+        f.write("\n (assert ( and \n" + "\n".join(pos_constraints) + "\n))\n\n")
 
-
-            pos_constraints.append("(or " + " ".join(ors) + ")")
-        f.write("(assert ( and \n" + "\n".join(pos_constraints) + "\n))\n\n")
 
 
         # --- 6. 生成朝向关系约束 (朝向、背向、相对角度) ---
@@ -228,8 +234,8 @@ def generate_complete_smt_dreal(points, filename):
                     f"(let ((rel_heading (- {B_h} {A_h})))"
                     f"  (let ((norm_rel (ite (>= rel_heading 360.0) (- rel_heading 360.0) "
                     f"(ite (< rel_heading 0.0) (+ rel_heading 360.0) rel_heading))))"
-                    f"    (and (>= norm_rel (- relative_angle_v{i}_{ref_name} 5)) "
-                    f"(<= norm_rel (+ relative_angle_v{i}_{ref_name} 5)) " # 角度差是正负5
+                    f"    (and (>= norm_rel  relative_angle_v{i}_{ref_name} ) "
+                    f"(<= norm_rel (+ relative_angle_v{i}_{ref_name} 10)) " # 角度差是10
                     f"(>= relative_angle_v{i}_{ref_name} 0) "
                     f"(< relative_angle_v{i}_{ref_name} 360))))"
                 )
@@ -262,7 +268,81 @@ def generate_complete_smt_dreal(points, filename):
 
 if __name__ == "__main__":
 
-    ##   two-points-test_2_1_new
+
+
+    #   ,only pos:   s  only head:  s
+    points_2_13 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 15.0, "y": 15.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_13, "two-points-test_2_13_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_13_new.smt2")
+
+    # 40s ,only pos: 0.2  s  only head:  0.2  s
+    points_2_12 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 235.0},
+        {"id": "P1", "x": 5.0, "y": -5.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_12, "two-points-test_2_12_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_12_new.smt2")
+
+
+    # not ahead of, 46s ,only pos:  0.3 s  only head:  0.2s
+    points_2_11 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 214.0},
+        {"id": "P1", "x": 5.0, "y": -5.0, "heading": 0.0}
+    ]
+
+    #generate_complete_smt_dreal(points_2_11, "two-points-test_2_11_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_11_new.smt2")
+
+    # ahead of  ,   40s  only pos: 0.2s  only head:  0.2s
+    points_2_10 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 216.0},
+        {"id": "P1", "x": 5.0, "y": -5.0, "heading": 0.0}
+    ]
+
+    #generate_complete_smt_dreal(points_2_10, "two-points-test_2_10_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_10_new.smt2")
+
+    # ahead of  , 41s  only pos:  0.2 s   only head:  0.2s
+    points_2_9 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 215.0},
+        {"id": "P1", "x": 5.0, "y": -5.0, "heading": 0.0}
+    ]
+
+    #generate_complete_smt_dreal(points_2_9, "two-points-test_2_9_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_9_new.smt2")
+
+
+    # ahead of  , 40s  only pos:  0.2 s   only head: 0.2s
+    points_2_8 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 224.0},
+        {"id": "P1", "x": 5.0, "y": -5.0, "heading": 0.0}
+    ]
+
+    #generate_complete_smt_dreal(points_2_8, "two-points-test_2_8_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_8_new.smt2")
+
+
+    # ahead of  ,  40s     only pos: 0.2 s      only head: 0.2s
+    points_2_7 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 225.0},
+        {"id": "P1", "x": 5.0, "y": -5.0, "heading": 0.0}
+    ]
+
+    #generate_complete_smt_dreal(points_2_7, "two-points-test_2_7_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_7_new.smt2")
+
+    # ahead of  ,   186mins    only pos: 1.4s   only head: 0.8s
+    points_2_5 = [
+        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
+        {"id": "P1", "x": 0.0, "y": 5.0, "heading": 0.0}
+    ]
+    #generate_complete_smt_dreal(points_2_5, "two-points-test_2_5_new.smt2")
+    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_5_new.smt2")
+
+    ##   two-points-test_2_1_new   300s   only pos: 1.2s    only head:0.2s
     points_2_1 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 315.0},
         {"id": "P1", "x": 5.0, "y": 5.0, "heading": 0.0}
@@ -271,7 +351,7 @@ if __name__ == "__main__":
     #generate_complete_smt_dreal(points_2_1, "two-points-test_2_1_new.smt2")
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_1_new.smt2")
 
-    #  6s
+    #  3.3s
     points_2_2 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": 5.0, "y": 0.0, "heading": 0.0}
@@ -281,7 +361,7 @@ if __name__ == "__main__":
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_2_new.smt2")
 
 
-    #  3s
+    #  1.7s
     points_2_3 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": -5.0, "y": 0.0, "heading": 0.0}
@@ -290,7 +370,7 @@ if __name__ == "__main__":
     #generate_complete_smt_dreal(points_2_3, "two-points-test_2_3_new.smt2")
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_3_new.smt2")
 
-    # 48
+    # 2.1s
     points_2_4 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": -5.0, "y": 0.0, "heading": 270.0}
@@ -300,17 +380,7 @@ if __name__ == "__main__":
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_4_new.smt2")
 
 
-
-    #
-    points_2_5 = [
-        {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
-        {"id": "P1", "x": 0.0, "y": 5.0, "heading": 0.0}
-    ]
-
-    #generate_complete_smt_dreal(points_2_5, "two-points-test_2_5_new.smt2")
-    #print("已生成 dReal 可用的完整 SMT-LIB 文件: two-points-test_2_5_new.smt2")
-
-    # 54s
+    # 22s
     points_2_6 = [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "P1", "x": 1.0, "y": 5.0, "heading": 0.0}
@@ -339,14 +409,14 @@ if __name__ == "__main__":
     #print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test1.smt2")
 
 
-    ##
+    ##        only head:
     points_3_3= [
         {"id": "ego", "x": 0.0, "y": 0.0, "heading": 0.0},
         {"id": "O1", "x": -5.0, "y": 0.0, "heading": 0.0},
         {"id": "O2", "x": -10.0, "y":0.0, "heading": 0.0}
     ]
-    #generate_complete_smt_dreal(points_3_3, "three-points-test3.smt2")
-    #print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test3.smt2")
+    generate_complete_smt_dreal(points_3_3, "three-points-test3.smt2")
+    print("已生成 dReal 可用的完整 SMT-LIB 文件: three-points-test3.smt2")
 
 
 
